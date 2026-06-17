@@ -12,11 +12,10 @@ const plans = [
     period: "forever",
     description: "Perfect for trying out ClipMaker AI",
     features: [
-      "50 clips per month",
-      "Up to 30-min videos",
-      "720p export quality",
-      "Basic AI detection",
+      "15 free clips",
+      "Basic AI clipping",
       "TikTok & Instagram export",
+      "720p export quality",
       "Community support",
     ],
     cta: "Start Free",
@@ -27,12 +26,12 @@ const plans = [
     name: "Pro",
     price: "$29",
     period: "/month",
-    description: "For creators who want more power",
+    description: "For creators who want unlimited power",
     features: [
-      "500 clips per month",
-      "Up to 4-hour videos",
+      "Unlimited clips",
+      "Faster processing",
+      "Premium templates",
       "4K export quality",
-      "Advanced AI detection",
       "All platform exports",
       "Custom captions & branding",
       "Priority processing",
@@ -43,21 +42,19 @@ const plans = [
     popular: true,
   },
   {
-    name: "Business",
-    price: "$99",
-    period: "/month",
+    name: "Enterprise",
+    price: "Custom",
+    period: "",
     description: "For teams and agencies",
     features: [
+      "Custom pricing",
+      "Team access",
       "Unlimited clips",
-      "Up to 4-hour videos",
-      "4K export quality",
-      "Advanced AI detection",
-      "All platform exports",
-      "Custom branding & watermarks",
-      "Team collaboration",
       "API access",
-      "Dedicated support",
       "Custom integrations",
+      "Dedicated support",
+      "Custom branding",
+      "SLA guarantee",
     ],
     cta: "Contact Sales",
     href: "/contact",
@@ -123,9 +120,11 @@ export default function Pricing() {
                   <span className="text-4xl font-bold tracking-tight">
                     {plan.price}
                   </span>
-                  <span className="text-sm text-muted-foreground">
-                    {plan.period}
-                  </span>
+                  {plan.period && (
+                    <span className="text-sm text-muted-foreground">
+                      {plan.period}
+                    </span>
+                  )}
                 </div>
                 <Button
                   className={`mt-6 w-full ${
@@ -140,7 +139,10 @@ export default function Pricing() {
                 </Button>
                 <ul className="mt-8 space-y-3">
                   {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-start gap-3 text-sm">
+                    <li
+                      key={feature}
+                      className="flex items-start gap-3 text-sm"
+                    >
                       <Check className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
                       <span className="text-muted-foreground">{feature}</span>
                     </li>

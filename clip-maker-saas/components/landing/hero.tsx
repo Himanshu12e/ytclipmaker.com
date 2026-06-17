@@ -2,13 +2,33 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowRight, Play, CheckCircle2 } from "lucide-react";
+import { ArrowRight, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import DemoModal from "./demo-modal";
+import { useAuthStore } from "@/lib/store";
+
+const FREE_CLIPS_LIMIT = 15;
 
 export default function Hero() {
-  const [demoOpen, setDemoOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const router = useRouter();
+  const { isLoggedIn, freeClipsRemaining, useClip } = useAuthStore();
+
+  const handleGenerate = () => {
+    if (!isLoggedIn) {
+      router.push("/signup");
+      return;
+    }
+    if (freeClipsRemaining <= 0) {
+      document.getElementById("pricing")?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    if (url.trim()) {
+      useClip();
+      router.push("/signup");
+    }
+  };
 
   return (
     <section className="relative overflow-hidden pt-32 pb-20 sm:pt-40 sm:pb-28">
@@ -38,11 +58,9 @@ export default function Hero() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="text-4xl font-extrabold tracking-tight sm:text-5xl lg:text-7xl"
           >
-            Create Viral Short Clips
+            Turn Long YouTube Videos Into
             <br />
-            from Any Long Video
-            <br />
-            <span className="text-gradient">Automatically</span>
+            <span className="text-gradient">Viral Shorts</span> In Seconds
           </motion.h1>
 
           <motion.p
@@ -51,39 +69,52 @@ export default function Hero() {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground sm:text-xl"
           >
-            Stop manually scrubbing through hours of footage. Our AI finds the
-            most engaging moments, adds captions, and formats for every
-            platform — in seconds, not hours.
+            Paste a YouTube link and instantly generate viral clips for TikTok,
+            Reels, and Shorts using AI.
           </motion.p>
 
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
-            className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center"
+            className="mx-auto mt-10 max-w-2xl"
           >
-            <Button size="lg" className="group gap-2 px-8 text-base" asChild>
-              <Link href="/signup">
-                Start Creating for Free
-                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-              </Link>
-            </Button>
-            <Button
-              variant="outline"
-              size="lg"
-              className="group gap-2 px-8 text-base"
-              onClick={() => setDemoOpen(true)}
-            >
-              <Play className="h-4 w-4 fill-current" />
-              Watch Demo
-            </Button>
+            <div className="glass-card glow rounded-2xl p-1">
+              <div className="flex flex-col gap-3 rounded-xl bg-gradient-to-br from-white/[0.05] to-white/[0.02] p-3 sm:flex-row sm:items-center">
+                <div className="relative flex-1">
+                  <svg
+                    className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-red-500"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+                  </svg>
+                  <input
+                    type="url"
+                    placeholder="Paste your YouTube video URL here..."
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
+                    className="h-12 w-full rounded-lg border-0 bg-transparent pl-11 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 sm:text-base"
+                  />
+                </div>
+                <Button
+                  size="lg"
+                  className="group h-12 gap-2 px-6 text-sm font-semibold sm:text-base"
+                  onClick={handleGenerate}
+                >
+                  Generate 15 Free Clips
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                </Button>
+              </div>
+            </div>
           </motion.div>
 
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.4 }}
-            className="mt-10 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-muted-foreground"
+            className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted-foreground"
           >
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-green-500" />
@@ -91,13 +122,19 @@ export default function Hero() {
             </div>
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-green-500" />
-              50 clips/month free
-            </div>
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-              Cancel anytime
+              15 clips free
             </div>
           </motion.div>
+
+          {isLoggedIn && freeClipsRemaining < FREE_CLIPS_LIMIT && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="mt-4 text-sm text-muted-foreground"
+            >
+              {freeClipsRemaining} free clips remaining
+            </motion.div>
+          )}
         </div>
 
         <motion.div
@@ -187,8 +224,8 @@ export default function Hero() {
           </div>
         </motion.div>
       </div>
-
-      <DemoModal open={demoOpen} onOpenChange={setDemoOpen} />
     </section>
   );
 }
+
+

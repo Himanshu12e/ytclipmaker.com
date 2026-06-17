@@ -6,39 +6,39 @@ import { ChevronDown } from "lucide-react";
 
 const faqs = [
   {
-    question: "What types of videos can I upload?",
+    question: "How does ClipMaker AI work?",
     answer:
-      "You can upload any long-form video including podcasts, webinars, tutorials, interviews, livestreams, and more. We support MP4, MOV, AVI, MKV, and WebM formats. Videos can be up to 4 hours long on Pro and Business plans.",
+      "ClipMaker AI uses advanced artificial intelligence to analyze your YouTube videos. Simply paste a YouTube URL, and our AI will detect the most viral-worthy moments, generate short clips with auto captions, and format them for TikTok, Instagram Reels, and YouTube Shorts — all automatically.",
   },
   {
-    question: "How does the AI decide which moments to clip?",
+    question: "Do I need editing skills?",
     answer:
-      "Our AI analyzes multiple factors including speech patterns, visual engagement, topic transitions, audience retention signals, and viral potential. It identifies the most compelling and shareable moments based on what performs well on social media platforms.",
+      "Not at all! ClipMaker AI handles everything for you. Our AI detects viral moments, adds captions, reframes for vertical format, and tracks faces — all with zero editing experience required. Just paste a link and let AI do the work.",
   },
   {
-    question: "Can I customize the clips after generation?",
+    question: "How many free clips do I get?",
     answer:
-      "Absolutely. While AI handles the heavy lifting, you can adjust clip boundaries, add or remove captions, change caption styles, add your own branding, adjust audio levels, and more before exporting.",
+      "When you sign up, you receive 15 free clips with no credit card required. This gives you a chance to experience the full power of ClipMaker AI before committing to a paid plan.",
   },
   {
-    question: "What platforms can I export to?",
+    question: "Can I cancel anytime?",
     answer:
-      "We support direct export to TikTok, Instagram Reels, YouTube Shorts, X (Twitter), Facebook Reels, and LinkedIn. Each format is automatically optimized for the platform's aspect ratio, duration limits, and best practices.",
+      "Yes! You can cancel your subscription at any time. There are no long-term contracts or hidden fees. If you cancel, you'll retain access to your plan until the end of your current billing period.",
   },
   {
-    question: "Is there a free plan available?",
+    question: "Which platforms are supported?",
     answer:
-      "Yes! Our free plan includes 50 clips per month, videos up to 30 minutes, 720p export quality, and access to TikTok and Instagram exports. No credit card required to get started.",
+      "ClipMaker AI supports export to TikTok, Instagram Reels, YouTube Shorts, X (Twitter), Facebook Reels, and LinkedIn. Each clip is automatically optimized with the correct aspect ratio, duration, and formatting for each platform.",
   },
   {
     question: "How fast is the processing?",
     answer:
-      "Most videos are processed in 2-5x real-time speed. A 1-hour video typically takes about 15-30 minutes to fully process, including AI analysis, clip generation, and caption creation.",
+      "Most videos are processed in near real-time. A typical 30-minute YouTube video generates 15+ clips in under 2 minutes. Processing speed may vary based on video length and server load.",
   },
   {
-    question: "Can I use ClipMaker AI for my team or agency?",
+    question: "What types of YouTube videos work best?",
     answer:
-      "Yes! Our Business plan includes team collaboration features, shared workspaces, custom branding, API access, and dedicated support. Contact our sales team for custom enterprise solutions.",
+      "ClipMaker AI works great with podcasts, interviews, tutorials, lectures, vlogs, and any conversational content. The AI is trained to find engaging moments across all video types.",
   },
 ];
 
@@ -81,11 +81,15 @@ export default function FAQ() {
                 <button
                   onClick={() => setOpenIndex(isOpen ? null : index)}
                   className={`flex w-full items-center justify-between border-b border-white/[0.06] py-5 text-left transition-colors ${
-                    isOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                    isOpen
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   aria-expanded={isOpen}
                 >
-                  <span className="pr-4 text-base font-medium">{faq.question}</span>
+                  <span className="pr-4 text-base font-medium">
+                    {faq.question}
+                  </span>
                   <ChevronDown
                     className={`h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-300 ${
                       isOpen ? "rotate-180" : ""

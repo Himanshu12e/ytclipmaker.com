@@ -1,22 +1,25 @@
 import type { Metadata } from "next";
+import { Toaster } from "react-hot-toast";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ClipMaker AI — Turn Long Videos into Viral Clips",
+  title: "ClipMaker AI — Turn Long YouTube Videos Into Viral Shorts",
   description:
-    "Automatically extract the most engaging moments from long-form videos and turn them into scroll-stopping short clips with AI-powered editing, captions, and effects.",
+    "Paste a YouTube link and instantly generate viral clips for TikTok, Reels, and Shorts using AI. Turn long videos into viral shorts in seconds.",
   keywords: [
-    "video clipping",
-    "AI video editor",
-    "short clips",
-    "content repurposing",
-    "social media",
+    "youtube to shorts",
+    "AI video clipping",
     "viral clips",
+    "tiktok clips",
+    "instagram reels",
+    "youtube shorts",
+    "video repurposing",
+    "AI video editor",
   ],
   openGraph: {
-    title: "ClipMaker AI — Turn Long Videos into Viral Clips",
+    title: "ClipMaker AI — Turn Long YouTube Videos Into Viral Shorts",
     description:
-      "Automatically extract the most engaging moments from long-form videos and turn them into scroll-stopping short clips.",
+      "Paste a YouTube link and instantly generate viral clips for TikTok, Reels, and Shorts using AI.",
     type: "website",
   },
 };
@@ -30,7 +33,11 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
         <link
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
           rel="stylesheet"
@@ -38,6 +45,16 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen bg-background text-foreground antialiased">
         {children}
+        <Toaster
+          position="bottom-right"
+          toastOptions={{
+            style: {
+              background: "oklch(0.14 0.005 270)",
+              color: "oklch(0.985 0 0)",
+              border: "1px solid rgba(255,255,255,0.08)",
+            },
+          }}
+        />
       </body>
     </html>
   );

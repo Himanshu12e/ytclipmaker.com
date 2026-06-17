@@ -54,16 +54,13 @@ export default function Navbar() {
     return () => observer.disconnect();
   }, []);
 
-  const scrollTo = useCallback(
-    (href: string) => {
-      setMobileOpen(false);
-      const el = document.querySelector(href);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth" });
-      }
-    },
-    []
-  );
+  const scrollTo = useCallback((href: string) => {
+    setMobileOpen(false);
+    const el = document.querySelector(href);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth" });
+    }
+  }, []);
 
   return (
     <motion.header
@@ -124,7 +121,11 @@ export default function Navbar() {
           aria-label={mobileOpen ? "Close menu" : "Open menu"}
           aria-expanded={mobileOpen}
         >
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          {mobileOpen ? (
+            <X className="h-5 w-5" />
+          ) : (
+            <Menu className="h-5 w-5" />
+          )}
         </button>
       </div>
 
@@ -155,11 +156,20 @@ export default function Navbar() {
                 </motion.button>
               ))}
               <div className="flex flex-col gap-2 pt-4">
-                <Button variant="outline" size="sm" asChild className="w-full">
-                  <Link href="/login" onClick={() => setMobileOpen(false)}>Log In</Link>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  asChild
+                  className="w-full"
+                >
+                  <Link href="/login" onClick={() => setMobileOpen(false)}>
+                    Log In
+                  </Link>
                 </Button>
                 <Button size="sm" asChild className="w-full">
-                  <Link href="/signup" onClick={() => setMobileOpen(false)}>Start Free</Link>
+                  <Link href="/signup" onClick={() => setMobileOpen(false)}>
+                    Start Free
+                  </Link>
                 </Button>
               </div>
             </div>

@@ -20,8 +20,8 @@ export default function CTA() {
             <div className="pointer-events-none absolute top-0 left-1/2 h-[400px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-500/10 blur-3xl" />
             <div className="relative mx-auto max-w-2xl text-center">
               <h2 className="text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
-                Ready to create your{" "}
-                <span className="text-gradient">first viral clip</span>?
+                Start Creating{" "}
+                <span className="text-gradient">Viral Clips</span> Today
               </h2>
               <p className="mx-auto mt-4 max-w-xl text-lg text-muted-foreground">
                 Join thousands of creators who are already using ClipMaker AI to
@@ -30,21 +30,13 @@ export default function CTA() {
               <div className="mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
                 <Button size="lg" className="group gap-2 px-8 text-base" asChild>
                   <Link href="/signup">
-                    Get Started Free
+                    Generate 15 Free Clips
                     <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                   </Link>
                 </Button>
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="px-8 text-base"
-                  asChild
-                >
-                  <Link href="/contact">Talk to Sales</Link>
-                </Button>
               </div>
               <p className="mt-4 text-sm text-muted-foreground">
-                Free plan available. No credit card required.
+                No credit card required • 15 clips free
               </p>
             </div>
           </div>
