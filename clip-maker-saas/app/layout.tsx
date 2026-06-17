@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Toaster } from "react-hot-toast";
+import { AuthProvider } from "@/lib/supabase/auth-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -43,9 +44,11 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen bg-background text-foreground antialiased">
-        {children}
-        <Toaster
+        <body className="min-h-screen bg-background text-foreground antialiased">
+          <AuthProvider>
+            {children}
+          </AuthProvider>
+          <Toaster
           position="bottom-right"
           toastOptions={{
             style: {

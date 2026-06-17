@@ -33,7 +33,7 @@ export default function SignupPage() {
 
     login(email);
     toast.success("Account created! Check your email to confirm.");
-    router.push("/");
+    router.push("/dashboard");
   }
 
   return (

@@ -33,7 +33,7 @@ export default function LoginPage() {
 
     login(email);
     toast.success("Logged in successfully!");
-    router.push("/");
+    router.push("/dashboard");
   }
 
   return (

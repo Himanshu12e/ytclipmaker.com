@@ -120,6 +120,9 @@ export default function Navbar() {
           {isLoggedIn ? (
             <>
               <span className="text-sm text-muted-foreground">{email}</span>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/dashboard">Dashboard</Link>
+              </Button>
               <Button variant="ghost" size="sm" onClick={handleLogout}>
                 Log Out
               </Button>
@@ -182,6 +185,19 @@ export default function Navbar() {
                     <p className="px-4 text-sm text-muted-foreground">
                       {email}
                     </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      asChild
+                      className="w-full"
+                    >
+                      <Link
+                        href="/dashboard"
+                        onClick={() => setMobileOpen(false)}
+                      >
+                        Dashboard
+                      </Link>
+                    </Button>
                     <Button
                       variant="outline"
                       size="sm"
