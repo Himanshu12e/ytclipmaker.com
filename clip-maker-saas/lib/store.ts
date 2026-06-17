@@ -35,3 +35,10 @@ export const useAuthStore = create<AuthState>()(
     { name: "clipmaker-auth" }
   )
 );
+
+export async function signOut() {
+  const { createClient } = await import("@/lib/supabase/client");
+  const supabase = createClient();
+  await supabase.auth.signOut();
+  useAuthStore.getState().logout();
+}

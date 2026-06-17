@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuthStore, signOut } from "@/lib/store";
 
 const navLinks = [
   { label: "Features", href: "#features" },
@@ -17,6 +19,14 @@ export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("");
+  const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
+  const email = useAuthStore((s) => s.email);
+  const router = useRouter();
+
+  async function handleLogout() {
+    await signOut();
+    router.push("/");
+  }
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -107,12 +117,23 @@ export default function Navbar() {
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
-          <Button variant="ghost" size="sm" asChild>
-            <Link href="/login">Log In</Link>
-          </Button>
-          <Button size="sm" asChild>
-            <Link href="/signup">Start Free</Link>
-          </Button>
+          {isLoggedIn ? (
+            <>
+              <span className="text-sm text-muted-foreground">{email}</span>
+              <Button variant="ghost" size="sm" onClick={handleLogout}>
+                Log Out
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/login">Log In</Link>
+              </Button>
+              <Button size="sm" asChild>
+                <Link href="/signup">Start Free</Link>
+              </Button>
+            </>
+          )}
         </div>
 
         <button
@@ -156,21 +177,45 @@ export default function Navbar() {
                 </motion.button>
               ))}
               <div className="flex flex-col gap-2 pt-4">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  asChild
-                  className="w-full"
-                >
-                  <Link href="/login" onClick={() => setMobileOpen(false)}>
-                    Log In
-                  </Link>
-                </Button>
-                <Button size="sm" asChild className="w-full">
-                  <Link href="/signup" onClick={() => setMobileOpen(false)}>
-                    Start Free
-                  </Link>
-                </Button>
+                {isLoggedIn ? (
+                  <>
+                    <p className="px-4 text-sm text-muted-foreground">
+                      {email}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        handleLogout();
+                        setMobileOpen(false);
+                      }}
+                      className="w-full"
+                    >
+                      Log Out
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      asChild
+                      className="w-full"
+                    >
+                      <Link href="/login" onClick={() => setMobileOpen(false)}>
+                        Log In
+                      </Link>
+                    </Button>
+                    <Button size="sm" asChild className="w-full">
+                      <Link
+                        href="/signup"
+                        onClick={() => setMobileOpen(false)}
+                      >
+                        Start Free
+                      </Link>
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>
