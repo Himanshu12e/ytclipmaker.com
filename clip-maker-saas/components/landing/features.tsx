@@ -9,36 +9,48 @@ const features = [
     title: "AI-Powered Detection",
     description:
       "Our AI analyzes your video to identify the most engaging, shareable moments based on speech patterns, visual cues, and viral potential.",
+    color: "from-blue-500/20 to-cyan-500/20",
+    iconColor: "text-blue-400",
   },
   {
     icon: Scissors,
     title: "Smart Auto-Clipping",
     description:
       "Automatically split long videos into perfectly timed short clips — no manual scrubbing or guessing where to cut.",
+    color: "from-purple-500/20 to-pink-500/20",
+    iconColor: "text-purple-400",
   },
   {
     icon: Subtitles,
     title: "Auto Captions & Subtitles",
     description:
       "Generate accurate, beautifully styled captions in multiple languages. Boost accessibility and engagement with perfectly synced text.",
+    color: "from-green-500/20 to-emerald-500/20",
+    iconColor: "text-green-400",
   },
   {
     icon: Share2,
-    title: "One-Click Multi-Platform Export",
+    title: "One-Click Export",
     description:
       "Export clips perfectly formatted for TikTok, Instagram Reels, YouTube Shorts, and X — all with a single click.",
+    color: "from-orange-500/20 to-red-500/20",
+    iconColor: "text-orange-400",
   },
   {
     icon: Zap,
     title: "Lightning-Fast Processing",
     description:
       "Process hour-long videos in minutes. Our cloud infrastructure handles the heavy lifting so you can focus on creating.",
+    color: "from-yellow-500/20 to-amber-500/20",
+    iconColor: "text-yellow-400",
   },
   {
     icon: BarChart3,
     title: "Analytics & Performance",
     description:
       "Track how your clips perform across platforms with built-in analytics. Understand what works and optimize your content strategy.",
+    color: "from-indigo-500/20 to-violet-500/20",
+    iconColor: "text-indigo-400",
   },
 ];
 
@@ -47,7 +59,7 @@ const containerVariants = {
   visible: {
     opacity: 1,
     transition: {
-      staggerChildren: 0.1,
+      staggerChildren: 0.08,
     },
   },
 };
@@ -75,7 +87,7 @@ export default function Features() {
           <span className="mb-4 inline-block rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
             Features
           </span>
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
             Everything you need to{" "}
             <span className="text-gradient">repurpose content</span>
           </h2>
@@ -90,19 +102,23 @@ export default function Features() {
           initial="hidden"
           whileInView="visible"
           viewport={{ once: true, margin: "-100px" }}
-          className="mx-auto mt-16 grid max-w-5xl gap-6 sm:grid-cols-2 lg:grid-cols-3"
+          className="mx-auto mt-16 grid max-w-5xl gap-5 sm:grid-cols-2 lg:grid-cols-3"
         >
           {features.map((feature) => (
             <motion.div
               key={feature.title}
               variants={itemVariants}
-              className="glass-card group relative rounded-xl p-6 transition-all duration-300 hover:bg-white/[0.05]"
+              whileHover={{ y: -4, scale: 1.01 }}
+              className="glass-card group relative rounded-xl p-6 transition-all duration-300 hover:border-white/[0.12] hover:bg-white/[0.05]"
             >
-              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500/20 to-purple-500/20 ring-1 ring-white/[0.08]">
-                <feature.icon className="h-5 w-5 text-blue-400" />
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-br opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              <div className={`relative mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br ${feature.color} ring-1 ring-white/[0.08] transition-all duration-300 group-hover:ring-white/[0.15]`}>
+                <feature.icon className={`h-5 w-5 ${feature.iconColor}`} />
               </div>
-              <h3 className="mb-2 text-base font-semibold">{feature.title}</h3>
-              <p className="text-sm leading-relaxed text-muted-foreground">
+              <h3 className="relative mb-2 text-base font-semibold">
+                {feature.title}
+              </h3>
+              <p className="relative text-sm leading-relaxed text-muted-foreground">
                 {feature.description}
               </p>
             </motion.div>

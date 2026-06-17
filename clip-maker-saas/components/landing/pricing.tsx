@@ -79,7 +79,7 @@ export default function Pricing() {
           <span className="mb-4 inline-block rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
             Pricing
           </span>
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
             Simple, transparent{" "}
             <span className="text-gradient">pricing</span>
           </h2>
@@ -88,7 +88,7 @@ export default function Pricing() {
           </p>
         </motion.div>
 
-        <div className="mx-auto mt-16 grid max-w-5xl gap-6 lg:grid-cols-3">
+        <div className="mx-auto mt-16 grid max-w-5xl items-start gap-6 lg:grid-cols-3">
           {plans.map((plan, index) => (
             <motion.div
               key={plan.name}
@@ -96,15 +96,15 @@ export default function Pricing() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-100px" }}
               transition={{ duration: 0.5, delay: index * 0.1 }}
-              className={`relative rounded-2xl p-px ${
+              className={`relative rounded-2xl ${
                 plan.popular
-                  ? "bg-gradient-to-b from-blue-500/50 to-purple-500/50"
-                  : "bg-white/[0.06]"
+                  ? "bg-gradient-to-b from-blue-500/50 to-purple-500/50 p-px lg:scale-105 lg:z-10"
+                  : "bg-white/[0.06] p-px"
               }`}
             >
               {plan.popular && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-1 text-xs font-semibold text-white">
+                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-1.5 text-xs font-semibold text-white shadow-lg shadow-blue-500/25">
                     <Zap className="h-3 w-3" />
                     Most Popular
                   </span>
