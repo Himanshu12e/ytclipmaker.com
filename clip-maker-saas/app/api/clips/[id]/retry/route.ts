@@ -95,27 +95,43 @@ async function processClipGeneration(
       {} as Record<string, string>
     );
 
-    await supabase
+    console.log(`[Retry Generation] Updating status to Completed for ${clipRequestId} (clips: ${uploadResults.length})...`);
+    const { data: updatedRow, error: statusErr } = await supabase
       .from("clip_requests")
       .update({
         clip_files: clipFilesMap,
         status: "Completed",
+        clips_generated: uploadResults.length,
+        completed_at: new Date().toISOString(),
       })
-      .eq("id", clipRequestId);
+      .eq("id", clipRequestId)
+      .select()
+      .single();
 
-    console.log(`[Retry Generation] Completed for ${clipRequestId}`);
+    if (statusErr) {
+      console.error(`[Retry Generation] CRITICAL: Failed to update status to Completed for ${clipRequestId}:`, statusErr.message);
+      throw new Error(`Failed to mark clip as completed: ${statusErr.message}`);
+    }
+    console.log(`[Retry Generation] Status updated to Completed for ${clipRequestId}:`, JSON.stringify({ id: updatedRow?.id, status: updatedRow?.status }));
 
     await cleanupTempFiles(clipRequestId);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
     console.error(`[Retry Generation] Failed for ${clipRequestId}:`, errorMessage);
 
-    await supabase
+    console.log(`[Retry Generation] Updating status to Failed for ${clipRequestId}...`);
+    const { error: failErr } = await supabase
       .from("clip_requests")
       .update({
         status: "Failed",
         error_message: errorMessage,
       })
       .eq("id", clipRequestId);
+
+    if (failErr) {
+      console.error(`[Retry Generation] CRITICAL: Failed to update status to Failed for ${clipRequestId}:`, failErr.message);
+    } else {
+      console.log(`[Retry Generation] Status updated to Failed for ${clipRequestId}`);
+    }
   }
 }

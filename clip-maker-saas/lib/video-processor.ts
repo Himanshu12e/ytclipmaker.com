@@ -71,10 +71,9 @@ export async function downloadYouTubeVideo(
   const ytdlpArgs = [
     "--no-playlist",
     "--merge-output-format", "mp4",
-    "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+    "-f", "best[height<=720]/best",
     "--no-overwrites",
-    "--no-warnings",
-    "--quiet",
+    "--no-check-certificates",
     "--print", "after_move:filepath",
     "-o", outputPath,
     videoUrl,
@@ -83,19 +82,27 @@ export async function downloadYouTubeVideo(
   try {
     const cmd = `"${YTDLP_PATH}" ${ytdlpArgs.map(a => `"${a}"`).join(" ")}`;
     console.log(`[VideoProcessor] Running: ${cmd}`);
-    const { stdout } = await execAsync(cmd, getExecOptions());
+    const { stdout, stderr } = await execAsync(cmd, getExecOptions());
+
+    if (stderr && stderr.trim()) {
+      console.log(`[VideoProcessor] yt-dlp stderr:\n${stderr.trim()}`);
+    }
 
     const actualPath = stdout.trim().split("\n").pop() || outputPath;
 
     if (!existsSync(actualPath)) {
-      throw new Error(`Downloaded file not found at ${actualPath}`);
+      throw new Error(`Downloaded file not found at ${actualPath}. yt-dlp output:\n${stdout}\n${stderr}`);
     }
 
     console.log(`[VideoProcessor] Video downloaded: ${actualPath}`);
     return actualPath;
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
+    const stderr = (error as any)?.stderr || "";
+    const stdout = (error as any)?.stdout || "";
     console.error(`[VideoProcessor] Download failed:`, errMsg);
+    if (stderr) console.error(`[VideoProcessor] yt-dlp stderr:\n${stderr.trim()}`);
+    if (stdout) console.error(`[VideoProcessor] yt-dlp stdout:\n${stdout.trim()}`);
 
     if (errMsg.includes("Video unavailable")) {
       throw new Error("This video is unavailable or has been removed from YouTube.");
@@ -145,10 +152,14 @@ export async function cutVideoClip(
   try {
     const cmd = `"${FFMPEG_PATH}" ${ffmpegArgs.join(" ")}`;
     console.log(`[VideoProcessor] Running: ${cmd}`);
-    await execAsync(cmd, getExecOptions());
+    const { stdout, stderr } = await execAsync(cmd, getExecOptions());
+
+    if (stderr && stderr.trim()) {
+      console.log(`[VideoProcessor] ffmpeg stderr:\n${stderr.trim()}`);
+    }
 
     if (!existsSync(outputPath)) {
-      throw new Error("Clip file was not created");
+      throw new Error(`Clip file was not created. ffmpeg output:\n${stdout}\n${stderr}`);
     }
 
     const stat = await import("fs/promises").then(fs => fs.stat(outputPath));
@@ -157,7 +168,11 @@ export async function cutVideoClip(
     return outputPath;
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
+    const stderr = (error as any)?.stderr || "";
+    const stdout = (error as any)?.stdout || "";
     console.error(`[VideoProcessor] Clip ${clipId} cut failed:`, errMsg);
+    if (stderr) console.error(`[VideoProcessor] ffmpeg stderr:\n${stderr.trim()}`);
+    if (stdout) console.error(`[VideoProcessor] ffmpeg stdout:\n${stdout.trim()}`);
     throw new Error(`Failed to cut clip ${clipId}: ${errMsg.substring(0, 200)}`);
   }
 }

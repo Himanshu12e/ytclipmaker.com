@@ -34,6 +34,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const GEMINI_TIMEOUT_MS = 60_000;
+
 async function callGeminiWithRetry(
   apiKey: string,
   prompt: string,
@@ -46,17 +48,35 @@ async function callGeminiWithRetry(
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 8192,
-          },
-        }),
-      });
+      console.log(`[Gemini API] ${model} attempt ${attempt}/${maxRetries} - sending request (prompt length: ${prompt.length} chars)...`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 8192,
+            },
+          }),
+          signal: controller.signal,
+        });
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        if (fetchErr instanceof Error && fetchErr.name === "AbortError") {
+          throw new Error(`Gemini API ${model} request timed out after ${GEMINI_TIMEOUT_MS / 1000}s`);
+        }
+        throw fetchErr;
+      }
+      clearTimeout(timeoutId);
+
+      console.log(`[Gemini API] ${model} response received - status: ${response.status}`);
 
       if (response.status === 429 || response.status === 503) {
         const retryDelay = response.status === 429 ? 30000 * attempt : 5000 * attempt;
@@ -67,34 +87,52 @@ async function callGeminiWithRetry(
 
       if (!response.ok) {
         const errorText = await response.text();
+        console.error(`[Gemini API] ${model} HTTP error ${response.status}:`, errorText.substring(0, 500));
         throw new Error(`Gemini API ${model} HTTP ${response.status}: ${errorText.substring(0, 200)}`);
       }
 
-      const data: GeminiResponse = await response.json();
+      const responseText = await response.text();
+      console.log(`[Gemini API] ${model} response body length: ${responseText.length} chars`);
+
+      let data: GeminiResponse;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        console.error(`[Gemini API] ${model} failed to parse response JSON:`, responseText.substring(0, 500));
+        throw new Error(`Gemini API ${model} returned invalid JSON: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+      }
 
       if (data.error) {
+        console.error(`[Gemini API] ${model} returned error:`, data.error);
         throw new Error(`Gemini API ${model}: ${data.error.message}`);
       }
 
       const parts = data.candidates?.[0]?.content?.parts;
       if (!parts || parts.length === 0) {
+        console.error(`[Gemini API] ${model} no candidates/parts in response:`, JSON.stringify(data).substring(0, 500));
         throw new Error("No response from Gemini AI");
       }
 
       for (const part of parts) {
         if (part.text && part.text.trim().startsWith("[")) {
+          console.log(`[Gemini API] ${model} found JSON array in response part (length: ${part.text.length})`);
           return part.text;
         }
       }
 
       const firstText = parts.find((p) => p.text)?.text;
-      if (firstText) return firstText;
+      if (firstText) {
+        console.log(`[Gemini API] ${model} using first text part (length: ${firstText.length})`);
+        return firstText;
+      }
 
+      console.error(`[Gemini API] ${model} no text content in parts:`, JSON.stringify(parts).substring(0, 500));
       throw new Error("No text content in Gemini response");
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      console.error(`[Gemini API] ${model} attempt ${attempt} failed:`, lastError.message);
       if (attempt < maxRetries) {
-        console.log(`[Gemini API] ${model} attempt ${attempt} failed: ${lastError.message}, retrying...`);
+        console.log(`[Gemini API] ${model} retrying in ${5 * attempt}s...`);
         await sleep(5000 * attempt);
       }
     }
@@ -174,26 +212,36 @@ Rules:
 - Ensure start_time < end_time for every clip
 - Return exactly ${clipCount} clips`;
 
+  console.log(`[Gemini API] Starting clip analysis with ${GEMINI_MODELS.length} model(s), transcript length: ${transcriptText.length} chars`);
+
   let lastError: Error | null = null;
 
-  for (const model of GEMINI_MODELS) {
+  for (let i = 0; i < GEMINI_MODELS.length; i++) {
+    const model = GEMINI_MODELS[i];
     try {
-      console.log(`[Gemini API] Trying model: ${model}`);
+      console.log(`[Gemini API] Trying model ${i + 1}/${GEMINI_MODELS.length}: ${model}`);
       const content = await callGeminiWithRetry(apiKey, prompt, model);
-      console.log(`[Gemini API] ${model} succeeded, parsing response...`);
+      console.log(`[Gemini API] ${model} raw response length: ${content.length} chars`);
 
       let parsed: unknown;
       try {
         const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        console.log(`[Gemini API] ${model} cleaned response length: ${cleaned.length} chars, starts with: ${cleaned.substring(0, 80)}`);
         parsed = JSON.parse(cleaned);
-      } catch {
-        console.error(`[Gemini API] Failed to parse ${model} response:`, content.substring(0, 500));
-        throw new Error("Failed to parse AI response as JSON");
+        console.log(`[Gemini API] ${model} JSON parsed successfully, type: ${typeof parsed}, isArray: ${Array.isArray(parsed)}`);
+      } catch (parseErr) {
+        const errMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        console.error(`[Gemini API] ${model} JSON parse error: ${errMsg}`);
+        console.error(`[Gemini API] ${model} raw response (first 500 chars):`, content.substring(0, 500));
+        throw new Error(`Failed to parse AI response as JSON: ${errMsg}`);
       }
 
       if (!Array.isArray(parsed)) {
+        console.error(`[Gemini API] ${model} response is not an array, type: ${typeof parsed}`);
         throw new Error("AI response is not an array");
       }
+
+      console.log(`[Gemini API] ${model} returned ${parsed.length} clips`);
 
       const clips: GeneratedClip[] = parsed.map(
         (clip: Record<string, unknown>, index: number) => ({
@@ -217,12 +265,15 @@ Rules:
       }));
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      console.error(`[Gemini API] ${model} failed:`, lastError.message);
-      if (model !== GEMINI_MODELS[GEMINI_MODELS.length - 1]) {
+      console.error(`[Gemini API] ${model} failed: ${lastError.message}`);
+      if (i < GEMINI_MODELS.length - 1) {
         console.log(`[Gemini API] Falling back to next model...`);
+      } else {
+        console.error(`[Gemini API] All ${GEMINI_MODELS.length} models exhausted`);
       }
     }
   }
 
+  console.error(`[Gemini API] All models failed, last error: ${lastError?.message}`);
   throw lastError || new Error("All Gemini models failed");
 }

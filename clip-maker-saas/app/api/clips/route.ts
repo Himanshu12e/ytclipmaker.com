@@ -138,19 +138,27 @@ async function generateClipsAsync(
 
     const transcriptText = buildTranscriptText(segments);
 
-    await supabase
+    console.log(`[Clip Generation] Saving transcript for ${clipRequestId}...`);
+    const { error: transcriptErr } = await supabase
       .from("clip_requests")
       .update({ transcript: transcriptText })
       .eq("id", clipRequestId);
+    if (transcriptErr) {
+      console.error(`[Clip Generation] Failed to save transcript for ${clipRequestId}:`, transcriptErr.message);
+    }
 
     console.log(`[Clip Generation] Analyzing transcript with Gemini for ${clipRequestId}...`);
     const clips = await analyzeTranscriptForClips(segments, videoTitle);
     console.log(`[Clip Generation] Generated ${clips.length} clips for ${clipRequestId}`);
 
-    await supabase
+    console.log(`[Clip Generation] Saving generated clips for ${clipRequestId}...`);
+    const { error: clipsErr } = await supabase
       .from("clip_requests")
       .update({ generated_clips: clips })
       .eq("id", clipRequestId);
+    if (clipsErr) {
+      console.error(`[Clip Generation] Failed to save generated clips for ${clipRequestId}:`, clipsErr.message);
+    }
 
     console.log(`[Clip Generation] Downloading video and cutting clips for ${clipRequestId}...`);
 
@@ -176,13 +184,24 @@ async function generateClipsAsync(
       {} as Record<string, string>
     );
 
-    await supabase
+    console.log(`[Clip Generation] Updating status to Completed for ${clipRequestId} (clips: ${uploadResults.length})...`);
+    const { data: updatedRow, error: statusErr } = await supabase
       .from("clip_requests")
       .update({
         clip_files: clipFilesMap,
         status: "Completed",
+        clips_generated: uploadResults.length,
+        completed_at: new Date().toISOString(),
       })
-      .eq("id", clipRequestId);
+      .eq("id", clipRequestId)
+      .select()
+      .single();
+
+    if (statusErr) {
+      console.error(`[Clip Generation] CRITICAL: Failed to update status to Completed for ${clipRequestId}:`, statusErr.message);
+      throw new Error(`Failed to mark clip as completed: ${statusErr.message}`);
+    }
+    console.log(`[Clip Generation] Status updated to Completed for ${clipRequestId}:`, JSON.stringify({ id: updatedRow?.id, status: updatedRow?.status }));
 
     console.log(`[Clip Generation] Completed successfully for ${clipRequestId}`);
 
@@ -193,13 +212,20 @@ async function generateClipsAsync(
 
     console.error(`[Clip Generation] Failed for ${clipRequestId}:`, errorMessage);
 
-    await supabase
+    console.log(`[Clip Generation] Updating status to Failed for ${clipRequestId}...`);
+    const { error: failErr } = await supabase
       .from("clip_requests")
       .update({
         status: "Failed",
         error_message: errorMessage,
       })
       .eq("id", clipRequestId);
+
+    if (failErr) {
+      console.error(`[Clip Generation] CRITICAL: Failed to update status to Failed for ${clipRequestId}:`, failErr.message);
+    } else {
+      console.log(`[Clip Generation] Status updated to Failed for ${clipRequestId}`);
+    }
 
     await cleanupTempFiles(clipRequestId);
   }
