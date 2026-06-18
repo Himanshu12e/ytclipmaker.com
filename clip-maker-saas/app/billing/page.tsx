@@ -79,21 +79,32 @@ function BillingContent() {
   }, [upgradeParam]);
 
   async function handleUpgrade(planId: string) {
-    if (planId === "free") {
-      toast.error("You're already on the free plan");
-      return;
-    }
-
-    if (planId === "enterprise") {
-      router.push("/contact");
+    if (planId === currentPlanId) {
+      toast.error("You're already on this plan");
       return;
     }
 
     setUpgrading(planId);
     try {
+      const res = await fetch("/api/plan", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: planId }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to update plan");
+        return;
+      }
+
+      setProfile(data.profile);
       toast.success(
-        `Upgrade to ${getPlanById(planId)?.name} is coming soon! We'll notify you when it's ready.`
+        `Switched to ${getPlanById(planId)?.name} plan!`
       );
+    } catch {
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setUpgrading(null);
     }

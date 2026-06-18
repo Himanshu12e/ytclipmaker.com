@@ -98,6 +98,18 @@ export default function DashboardPage() {
   }, [user, fetchClips]);
 
   useEffect(() => {
+    if (!user) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchClips();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility);
+  }, [user, fetchClips]);
+
+  useEffect(() => {
     if (!url.trim() || !isValidYouTubeUrl(url)) {
       setPreview(null);
       setMetadataError(false);
@@ -142,7 +154,7 @@ export default function DashboardPage() {
       return;
     }
 
-    if (freeClipsRemaining <= 0) {
+    if (plan === "free" && freeClipsRemaining <= 0) {
       toast.error("No free clips remaining. Upgrade to Pro!");
       return;
     }
@@ -197,7 +209,8 @@ export default function DashboardPage() {
   if (!user) return null;
 
   const clipsPercent = clipsLimit > 0 ? (clipsUsed / clipsLimit) * 100 : 0;
-  const noCredits = freeClipsRemaining <= 0;
+  const isUnlimited = plan === "pro" || plan === "enterprise";
+  const noCredits = !isUnlimited && freeClipsRemaining <= 0;
 
   return (
     <div className="min-h-screen bg-background">
@@ -264,15 +277,28 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold">
-                  {freeClipsRemaining}
+                  {plan === "pro" || plan === "enterprise"
+                    ? "Unlimited"
+                    : freeClipsRemaining}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">
-                    / {clipsLimit} remaining
+                    {plan === "pro" || plan === "enterprise"
+                      ? ""
+                      : `/ ${clipsLimit} remaining`}
                   </span>
                 </div>
-                <Progress value={clipsPercent} className="mt-3" />
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {clipsUsed} clips used
-                </p>
+                {plan === "free" && (
+                  <>
+                    <Progress value={clipsPercent} className="mt-3" />
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {clipsUsed} clips used
+                    </p>
+                  </>
+                )}
+                {(plan === "pro" || plan === "enterprise") && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Unlimited clips on {plan === "pro" ? "Pro" : "Enterprise"} plan
+                  </p>
+                )}
               </CardContent>
             </Card>
           </motion.div>

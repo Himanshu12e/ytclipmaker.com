@@ -68,7 +68,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  if (profile.free_clips_remaining <= 0) {
+  const isUnlimited = profile.plan === "pro" || profile.plan === "enterprise";
+
+  if (!isUnlimited && profile.free_clips_remaining <= 0) {
     return NextResponse.json({ error: "No free clips remaining" }, { status: 403 });
   }
 
@@ -88,14 +90,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to create clip request" }, { status: 500 });
   }
 
-  await supabase
-    .from("profiles")
-    .update({ free_clips_remaining: profile.free_clips_remaining - 1 })
-    .eq("id", user.id);
+  const newRemaining = isUnlimited
+    ? profile.free_clips_remaining
+    : profile.free_clips_remaining - 1;
+
+  if (!isUnlimited) {
+    await supabase
+      .from("profiles")
+      .update({ free_clips_remaining: newRemaining })
+      .eq("id", user.id);
+  }
 
   return NextResponse.json({
     clip_request: clipRequest,
-    free_clips_remaining: profile.free_clips_remaining - 1,
+    free_clips_remaining: newRemaining,
   });
 }
 
