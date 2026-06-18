@@ -23,13 +23,38 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
   }
 
-  const { data: profile, error: profileError } = await supabase
+  let { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("free_clips_remaining")
+    .select("free_clips_remaining, clips_limit, plan")
     .eq("id", user.id)
     .single();
 
   if (profileError || !profile) {
+    const { error: insertErr } = await supabase.from("profiles").upsert(
+      {
+        id: user.id,
+        email: user.email ?? "",
+        plan: "free",
+        clips_limit: 15,
+        free_clips_remaining: 15,
+      },
+      { onConflict: "id" }
+    );
+
+    if (insertErr) {
+      return NextResponse.json({ error: "Failed to create profile" }, { status: 500 });
+    }
+
+    const { data: newProfile } = await supabase
+      .from("profiles")
+      .select("free_clips_remaining, clips_limit, plan")
+      .eq("id", user.id)
+      .single();
+
+    profile = newProfile;
+  }
+
+  if (!profile) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
@@ -85,14 +110,42 @@ export async function GET() {
     return NextResponse.json({ error: "Failed to fetch clips" }, { status: 500 });
   }
 
-  const { data: profile } = await supabase
+  let { data: profile } = await supabase
     .from("profiles")
-    .select("free_clips_remaining")
+    .select("free_clips_remaining, clips_limit, plan")
     .eq("id", user.id)
     .single();
 
+  if (!profile) {
+    await supabase.from("profiles").upsert(
+      {
+        id: user.id,
+        email: user.email ?? "",
+        plan: "free",
+        clips_limit: 15,
+        free_clips_remaining: 15,
+      },
+      { onConflict: "id" }
+    );
+
+    const { data: newProfile } = await supabase
+      .from("profiles")
+      .select("free_clips_remaining, clips_limit, plan")
+      .eq("id", user.id)
+      .single();
+
+    profile = newProfile;
+  }
+
+  const clipsLimit = profile?.clips_limit ?? 15;
+  const freeClipsRemaining = profile?.free_clips_remaining ?? clipsLimit;
+  const clipsUsed = clipsLimit - freeClipsRemaining;
+
   return NextResponse.json({
     clips,
-    free_clips_remaining: profile?.free_clips_remaining ?? 15,
+    free_clips_remaining: freeClipsRemaining,
+    clips_used: clipsUsed,
+    clips_limit: clipsLimit,
+    plan: profile?.plan ?? "free",
   });
 }

@@ -58,6 +58,9 @@ export default function DashboardPage() {
   const [generating, setGenerating] = useState(false);
   const [clips, setClips] = useState<ClipRequest[]>([]);
   const [freeClipsRemaining, setFreeClipsRemaining] = useState(15);
+  const [clipsLimit, setClipsLimit] = useState(15);
+  const [clipsUsed, setClipsUsed] = useState(0);
+  const [plan, setPlan] = useState("free");
   const [loadingClips, setLoadingClips] = useState(true);
   const [preview, setPreview] = useState<VideoMetadata | null>(null);
   const [fetchingMetadata, setFetchingMetadata] = useState(false);
@@ -70,6 +73,9 @@ export default function DashboardPage() {
         const data = await res.json();
         setClips(data.clips ?? []);
         setFreeClipsRemaining(data.free_clips_remaining ?? 15);
+        setClipsLimit(data.clips_limit ?? 15);
+        setClipsUsed(data.clips_used ?? 0);
+        setPlan(data.plan ?? "free");
       }
     } catch {
       // silent
@@ -162,6 +168,7 @@ export default function DashboardPage() {
       }
 
       setFreeClipsRemaining(data.free_clips_remaining);
+      setClipsUsed(clipsLimit - data.free_clips_remaining);
       setClips((prev) => [data.clip_request, ...prev]);
       setUrl("");
       setPreview(null);
@@ -188,8 +195,7 @@ export default function DashboardPage() {
 
   if (!user) return null;
 
-  const clipsUsed = 15 - freeClipsRemaining;
-  const clipsPercent = (clipsUsed / 15) * 100;
+  const clipsPercent = clipsLimit > 0 ? (clipsUsed / clipsLimit) * 100 : 0;
   const noCredits = freeClipsRemaining <= 0;
 
   return (
@@ -252,7 +258,7 @@ export default function DashboardPage() {
                 <div className="text-3xl font-bold">
                   {freeClipsRemaining}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">
-                    / 15 remaining
+                    / {clipsLimit} remaining
                   </span>
                 </div>
                 <Progress value={clipsPercent} className="mt-3" />
@@ -300,8 +306,8 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-sm font-medium truncate">{user.email}</div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Free plan
+                <p className="mt-2 text-xs text-muted-foreground capitalize">
+                  {plan} plan
                 </p>
               </CardContent>
             </Card>

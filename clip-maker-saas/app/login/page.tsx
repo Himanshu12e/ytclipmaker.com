@@ -38,6 +38,29 @@ function LoginForm() {
       return;
     }
 
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (user) {
+      const { data: existingProfile } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", user.id)
+        .single();
+
+      if (!existingProfile) {
+        await supabase.from("profiles").upsert(
+          {
+            id: user.id,
+            email: email,
+            plan: "free",
+            clips_limit: 15,
+            free_clips_remaining: 15,
+          },
+          { onConflict: "id" }
+        );
+      }
+    }
+
     login(email);
     toast.success("Logged in successfully!");
     router.push("/dashboard");

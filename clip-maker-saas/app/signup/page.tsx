@@ -93,6 +93,17 @@ export default function SignupPage() {
 
       const result = await res.json();
 
+      await supabase.from("profiles").upsert(
+        {
+          id: data.user.id,
+          email: email,
+          plan: "free",
+          clips_limit: 15,
+          free_clips_remaining: 15,
+        },
+        { onConflict: "id" }
+      );
+
       if (result.success && data.session) {
         login(email);
         toast.success("Account created!");
