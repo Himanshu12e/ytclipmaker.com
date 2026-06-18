@@ -20,7 +20,7 @@ export default function SignupPage() {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
     });
@@ -31,9 +31,22 @@ export default function SignupPage() {
       return;
     }
 
-    login(email);
-    toast.success("Account created! Check your email to confirm.");
-    router.push("/dashboard");
+    if (data.user) {
+      await fetch("/api/auth/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: data.user.id }),
+      });
+    }
+
+    if (data.session) {
+      login(email);
+      toast.success("Account created!");
+      router.push("/dashboard");
+    } else {
+      toast.success("Account created! You can now log in.");
+      router.push("/login");
+    }
   }
 
   return (
