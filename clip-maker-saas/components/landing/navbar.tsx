@@ -123,6 +123,9 @@ export default function Navbar() {
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/dashboard">Dashboard</Link>
               </Button>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/billing">Billing</Link>
+              </Button>
               <Button variant="ghost" size="sm" onClick={handleLogout}>
                 Log Out
               </Button>
@@ -196,6 +199,19 @@ export default function Navbar() {
                         onClick={() => setMobileOpen(false)}
                       >
                         Dashboard
+                      </Link>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      asChild
+                      className="w-full"
+                    >
+                      <Link
+                        href="/billing"
+                        onClick={() => setMobileOpen(false)}
+                      >
+                        Billing
                       </Link>
                     </Button>
                     <Button

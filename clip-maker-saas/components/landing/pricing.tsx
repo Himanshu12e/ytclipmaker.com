@@ -4,63 +4,7 @@ import { motion } from "framer-motion";
 import { Check, Zap } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-
-const plans = [
-  {
-    name: "Free",
-    price: "$0",
-    period: "forever",
-    description: "Perfect for trying out ClipMaker AI",
-    features: [
-      "15 free clips",
-      "Basic AI clipping",
-      "TikTok & Instagram export",
-      "720p export quality",
-      "Community support",
-    ],
-    cta: "Start Free",
-    href: "/signup",
-    popular: false,
-  },
-  {
-    name: "Pro",
-    price: "$29",
-    period: "/month",
-    description: "For creators who want unlimited power",
-    features: [
-      "Unlimited clips",
-      "Faster processing",
-      "Premium templates",
-      "4K export quality",
-      "All platform exports",
-      "Custom captions & branding",
-      "Priority processing",
-      "Email support",
-    ],
-    cta: "Start Pro Trial",
-    href: "/signup?plan=pro",
-    popular: true,
-  },
-  {
-    name: "Enterprise",
-    price: "Custom",
-    period: "",
-    description: "For teams and agencies",
-    features: [
-      "Custom pricing",
-      "Team access",
-      "Unlimited clips",
-      "API access",
-      "Custom integrations",
-      "Dedicated support",
-      "Custom branding",
-      "SLA guarantee",
-    ],
-    cta: "Contact Sales",
-    href: "/contact",
-    popular: false,
-  },
-];
+import { plans } from "@/lib/pricing";
 
 export default function Pricing() {
   return (
@@ -88,7 +32,7 @@ export default function Pricing() {
         <div className="mx-auto mt-16 grid max-w-5xl items-start gap-6 lg:grid-cols-3">
           {plans.map((plan, index) => (
             <motion.div
-              key={plan.name}
+              key={plan.id}
               initial={{ opacity: 0, y: 30 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-100px" }}
@@ -140,11 +84,11 @@ export default function Pricing() {
                 <ul className="mt-8 space-y-3">
                   {plan.features.map((feature) => (
                     <li
-                      key={feature}
+                      key={feature.text}
                       className="flex items-start gap-3 text-sm"
                     >
                       <Check className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
-                      <span className="text-muted-foreground">{feature}</span>
+                      <span className="text-muted-foreground">{feature.text}</span>
                     </li>
                   ))}
                 </ul>

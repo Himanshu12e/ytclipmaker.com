@@ -18,6 +18,7 @@ import {
   Check,
   Zap,
   User,
+  CreditCard,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/supabase/auth-provider";
@@ -211,8 +212,15 @@ export default function DashboardPage() {
             </span>
           </Link>
 
-          <div className="flex items-center gap-4">
-            <span className="hidden text-sm text-muted-foreground sm:inline">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <Link
+              href="/billing"
+              className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground sm:inline-flex"
+            >
+              <CreditCard className="h-4 w-4" />
+              Billing
+            </Link>
+            <span className="hidden text-sm text-muted-foreground md:inline">
               {user.email}
             </span>
             <button
@@ -306,9 +314,30 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-sm font-medium truncate">{user.email}</div>
-                <p className="mt-2 text-xs text-muted-foreground capitalize">
-                  {plan} plan
-                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                      plan === "pro"
+                        ? "bg-yellow-500/10 text-yellow-400"
+                        : plan === "enterprise"
+                          ? "bg-purple-500/10 text-purple-400"
+                          : "bg-blue-500/10 text-blue-400"
+                    }`}
+                  >
+                    {plan === "pro" && <Zap className="h-3 w-3" />}
+                    {plan === "enterprise" && <Sparkles className="h-3 w-3" />}
+                    {plan === "free" && <Sparkles className="h-3 w-3" />}
+                    {plan.charAt(0).toUpperCase() + plan.slice(1)} plan
+                  </span>
+                </div>
+                <Link
+                  href="/billing"
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300"
+                >
+                  <CreditCard className="h-3 w-3" />
+                  Manage billing
+                  <ArrowRight className="h-3 w-3" />
+                </Link>
               </CardContent>
             </Card>
           </motion.div>
@@ -488,10 +517,13 @@ export default function DashboardPage() {
                         </li>
                       ))}
                     </ul>
-                    <button className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition-opacity hover:opacity-90">
+                    <Link
+                      href="/billing"
+                      className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition-opacity hover:opacity-90"
+                    >
                       Start Pro Trial
                       <ArrowRight className="h-4 w-4" />
-                    </button>
+                    </Link>
                   </div>
 
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-6">
@@ -512,9 +544,12 @@ export default function DashboardPage() {
                         </li>
                       ))}
                     </ul>
-                    <button className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-white/[0.06]">
+                    <Link
+                      href="/contact"
+                      className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-white/[0.06]"
+                    >
                       Contact Sales
-                    </button>
+                    </Link>
                   </div>
                 </div>
               </CardContent>
