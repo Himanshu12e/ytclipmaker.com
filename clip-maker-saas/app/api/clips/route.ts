@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { extractTranscript, buildTranscriptText } from "@/lib/transcript";
+import { analyzeTranscriptForClips } from "@/lib/ai-clips";
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -12,30 +14,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { video_url, video_title, thumbnail_url, channel_name } = await request.json();
+  const { video_url, video_title, thumbnail_url, channel_name } =
+    await request.json();
 
   if (!video_url) {
     return NextResponse.json({ error: "Video URL is required" }, { status: 400 });
   }
 
-  const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)[\w-]{11}(&[\w=-]*)?$/;
+  const youtubeRegex =
+    /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)[\w-]{11}(&[\w=-]*)?$/;
   if (!youtubeRegex.test(video_url)) {
     return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
   }
 
-  let { data: profile, error: profileError } = await supabase
+  let profileData: { free_clips_remaining: number; clips_limit: number; plan: string } | null = null;
+
+  const { data: initialProfile, error: fetchErr } = await supabase
     .from("profiles")
     .select("free_clips_remaining, clips_limit, plan")
     .eq("id", user.id)
     .single();
 
-  if (profileError) {
-    console.error("[API /clips POST] profile select error:", profileError.message, profileError.code);
-  }
-
-  if (profileError || !profile) {
-    console.log("[API /clips POST] No profile found for user", user.id, "- attempting to create");
-
+  if (fetchErr || !initialProfile) {
     const { error: insertErr } = await supabase.from("profiles").insert({
       id: user.id,
       email: user.email ?? "",
@@ -45,8 +45,10 @@ export async function POST(request: NextRequest) {
     });
 
     if (insertErr) {
-      console.error("[API /clips POST] profile insert error:", insertErr.message, insertErr.code, insertErr.details);
-      return NextResponse.json({ error: "Failed to create profile", details: insertErr.message }, { status: 500 });
+      return NextResponse.json(
+        { error: "Failed to create profile", details: insertErr.message },
+        { status: 500 }
+      );
     }
 
     const { data: newProfile, error: refetchErr } = await supabase
@@ -55,22 +57,25 @@ export async function POST(request: NextRequest) {
       .eq("id", user.id)
       .single();
 
-    if (refetchErr) {
-      console.error("[API /clips POST] profile refetch error:", refetchErr.message);
-      return NextResponse.json({ error: "Failed to load new profile", details: refetchErr.message }, { status: 500 });
+    if (refetchErr || !newProfile) {
+      return NextResponse.json(
+        { error: "Failed to load new profile", details: refetchErr?.message },
+        { status: 500 }
+      );
     }
 
-    profile = newProfile;
+    profileData = newProfile;
+  } else {
+    profileData = initialProfile;
   }
 
-  if (!profile) {
-    console.error("[API /clips POST] Profile still null after creation attempt for user", user.id);
+  if (!profileData) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const isUnlimited = profile.plan === "pro" || profile.plan === "enterprise";
+  const isUnlimited = profileData.plan === "pro" || profileData.plan === "enterprise";
 
-  if (!isUnlimited && profile.free_clips_remaining <= 0) {
+  if (!isUnlimited && profileData.free_clips_remaining <= 0) {
     return NextResponse.json({ error: "No free clips remaining" }, { status: 403 });
   }
 
@@ -82,17 +87,21 @@ export async function POST(request: NextRequest) {
       video_title: video_title ?? null,
       thumbnail_url: thumbnail_url ?? null,
       channel_name: channel_name ?? null,
+      status: "Processing",
     })
     .select()
     .single();
 
   if (insertError) {
-    return NextResponse.json({ error: "Failed to create clip request" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to create clip request" },
+      { status: 500 }
+    );
   }
 
   const newRemaining = isUnlimited
-    ? profile.free_clips_remaining
-    : profile.free_clips_remaining - 1;
+    ? profileData.free_clips_remaining
+    : profileData.free_clips_remaining - 1;
 
   if (!isUnlimited) {
     await supabase
@@ -101,10 +110,54 @@ export async function POST(request: NextRequest) {
       .eq("id", user.id);
   }
 
+  generateClipsAsync(clipRequest.id, video_url, video_title ?? "Unknown Video");
+
   return NextResponse.json({
     clip_request: clipRequest,
     free_clips_remaining: newRemaining,
   });
+}
+
+async function generateClipsAsync(
+  clipRequestId: string,
+  videoUrl: string,
+  videoTitle: string
+) {
+  const { createClient } = await import("@/lib/supabase/server");
+  const supabase = await createClient();
+
+  try {
+    const segments = await extractTranscript(videoUrl);
+    const transcriptText = buildTranscriptText(segments);
+
+    await supabase
+      .from("clip_requests")
+      .update({ transcript: transcriptText })
+      .eq("id", clipRequestId);
+
+    const clips = await analyzeTranscriptForClips(segments, videoTitle);
+
+    await supabase
+      .from("clip_requests")
+      .update({
+        generated_clips: clips,
+        status: "Completed",
+      })
+      .eq("id", clipRequestId);
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error occurred";
+
+    console.error(`[Clip Generation] Failed for ${clipRequestId}:`, errorMessage);
+
+    await supabase
+      .from("clip_requests")
+      .update({
+        status: "Failed",
+        error_message: errorMessage,
+      })
+      .eq("id", clipRequestId);
+  }
 }
 
 export async function GET() {
@@ -135,8 +188,6 @@ export async function GET() {
     .single();
 
   if (!profile) {
-    console.log("[API /clips GET] No profile found for user", user.id, "- attempting to create");
-
     const { error: insertErr } = await supabase.from("profiles").insert({
       id: user.id,
       email: user.email ?? "",
@@ -146,7 +197,7 @@ export async function GET() {
     });
 
     if (insertErr) {
-      console.error("[API /clips GET] profile insert error:", insertErr.message, insertErr.code, insertErr.details);
+      console.error("[API /clips GET] profile insert error:", insertErr.message);
     }
 
     const { data: newProfile } = await supabase

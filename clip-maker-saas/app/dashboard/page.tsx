@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Play,
   LogOut,
@@ -19,6 +19,11 @@ import {
   Zap,
   User,
   CreditCard,
+  ChevronDown,
+  ChevronUp,
+  Film,
+  Copy,
+  CheckCheck,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/supabase/auth-provider";
@@ -35,6 +40,18 @@ interface VideoMetadata {
   youtube_url: string;
 }
 
+interface GeneratedClip {
+  id: string;
+  title: string;
+  start_time: number;
+  end_time: number;
+  duration: number;
+  hook_score: number;
+  viral_score: number;
+  transcript_snippet: string;
+  reasoning: string;
+}
+
 interface ClipRequest {
   id: string;
   video_url: string;
@@ -43,12 +60,36 @@ interface ClipRequest {
   channel_name: string | null;
   status: string;
   created_at: string;
+  generated_clips: GeneratedClip[] | null;
+  transcript: string | null;
+  error_message: string | null;
 }
 
 function isValidYouTubeUrl(url: string): boolean {
   const regex =
     /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)[\w-]{11}(&[\w=-]*)?$/;
   return regex.test(url);
+}
+
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function ScoreBadge({ score, label }: { score: number; label: string }) {
+  const color =
+    score >= 8
+      ? "text-green-400 bg-green-500/10"
+      : score >= 5
+        ? "text-yellow-400 bg-yellow-500/10"
+        : "text-orange-400 bg-orange-500/10";
+
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>
+      {label}: {score}/10
+    </span>
+  );
 }
 
 export default function DashboardPage() {
@@ -66,6 +107,11 @@ export default function DashboardPage() {
   const [preview, setPreview] = useState<VideoMetadata | null>(null);
   const [fetchingMetadata, setFetchingMetadata] = useState(false);
   const [metadataError, setMetadataError] = useState(false);
+  const [expandedClip, setExpandedClip] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [generationStep, setGenerationStep] = useState("");
+  const [selectedClipDetail, setSelectedClipDetail] = useState<ClipRequest | null>(null);
 
   const fetchClips = useCallback(async () => {
     try {
@@ -143,6 +189,30 @@ export default function DashboardPage() {
     return () => clearTimeout(debounce);
   }, [url]);
 
+  useEffect(() => {
+    if (!generating) return;
+
+    const steps = [
+      { progress: 10, step: "Validating URL..." },
+      { progress: 25, step: "Extracting transcript..." },
+      { progress: 40, step: "Fetching video data..." },
+      { progress: 60, step: "Analyzing with AI..." },
+      { progress: 80, step: "Finding best moments..." },
+      { progress: 90, step: "Generating clips..." },
+    ];
+
+    let currentStep = 0;
+    const interval = setInterval(() => {
+      if (currentStep < steps.length) {
+        setGenerationProgress(steps[currentStep].progress);
+        setGenerationStep(steps[currentStep].step);
+        currentStep++;
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [generating]);
+
   async function handleGenerate() {
     if (!url.trim()) {
       toast.error("Please enter a YouTube URL");
@@ -160,6 +230,8 @@ export default function DashboardPage() {
     }
 
     setGenerating(true);
+    setGenerationProgress(0);
+    setGenerationStep("Starting...");
 
     try {
       const res = await fetch("/api/clips", {
@@ -185,12 +257,61 @@ export default function DashboardPage() {
       setClips((prev) => [data.clip_request, ...prev]);
       setUrl("");
       setPreview(null);
-      toast.success("Clip generation started!");
+      toast.success("Clip generation started! AI is analyzing the video...");
+
+      pollClipStatus(data.clip_request.id);
     } catch {
       toast.error("Something went wrong");
     } finally {
       setGenerating(false);
+      setGenerationProgress(100);
+      setGenerationStep("Done!");
     }
+  }
+
+  async function pollClipStatus(clipId: string) {
+    const maxAttempts = 60;
+    let attempts = 0;
+
+    const poll = async () => {
+      if (attempts >= maxAttempts) return;
+
+      try {
+        const res = await fetch(`/api/clips/${clipId}`);
+        if (res.ok) {
+          const data = await res.json();
+          const clip = data.clip;
+
+          if (clip.status === "Completed" || clip.status === "Failed") {
+            setClips((prev) =>
+              prev.map((c) => (c.id === clipId ? { ...c, ...clip } : c))
+            );
+
+            if (clip.status === "Completed") {
+              toast.success("Clips generated successfully!");
+            } else {
+              toast.error(clip.error_message ?? "Clip generation failed");
+            }
+            return;
+          }
+        }
+      } catch {
+        // silent
+      }
+
+      attempts++;
+      setTimeout(poll, 2000);
+    };
+
+    setTimeout(poll, 3000);
+  }
+
+  function handleCopyTimestamp(clip: GeneratedClip) {
+    const timestamp = `${formatTime(clip.start_time)} - ${formatTime(clip.end_time)}`;
+    navigator.clipboard.writeText(timestamp);
+    setCopiedId(clip.id);
+    toast.success("Timestamp copied!");
+    setTimeout(() => setCopiedId(null), 2000);
   }
 
   async function handleLogout() {
@@ -262,7 +383,6 @@ export default function DashboardPage() {
         </motion.div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-3">
-          {/* Free Clips Counter */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -303,7 +423,6 @@ export default function DashboardPage() {
             </Card>
           </motion.div>
 
-          {/* Total Clips Generated */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -317,7 +436,9 @@ export default function DashboardPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">{clips.length}</div>
+                <div className="text-3xl font-bold">
+                  {clips.filter((c) => c.status === "Completed").length}
+                </div>
                 <p className="mt-2 text-xs text-muted-foreground">
                   Total clips created
                 </p>
@@ -325,7 +446,6 @@ export default function DashboardPage() {
             </Card>
           </motion.div>
 
-          {/* Account */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -369,7 +489,6 @@ export default function DashboardPage() {
           </motion.div>
         </div>
 
-        {/* Generate Clips Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -430,7 +549,6 @@ export default function DashboardPage() {
                 </p>
               )}
 
-              {/* Video Preview Card */}
               {fetchingMetadata && (
                 <div className="mt-4 flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-4">
                   <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
@@ -487,6 +605,23 @@ export default function DashboardPage() {
                 </p>
               )}
 
+              {generating && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  className="mt-4 rounded-lg border border-blue-500/20 bg-blue-500/5 p-4"
+                >
+                  <div className="flex items-center gap-3 mb-3">
+                    <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                    <span className="text-sm font-medium text-blue-300">{generationStep}</span>
+                  </div>
+                  <Progress value={generationProgress} className="h-2" />
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    AI is analyzing the video transcript to find the best moments...
+                  </p>
+                </motion.div>
+              )}
+
               {noCredits && (
                 <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4">
                   <p className="text-sm font-medium text-yellow-300">
@@ -501,7 +636,6 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
 
-        {/* Pricing Section (shown when no credits) */}
         {noCredits && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -583,7 +717,6 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
-        {/* Clip History */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -617,65 +750,186 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-3">
                   {clips.map((clip) => (
-                    <div
-                      key={clip.id}
-                      className="flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-4 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="flex items-center gap-3 overflow-hidden min-w-0">
-                        {clip.thumbnail_url ? (
-                          <img
-                            src={clip.thumbnail_url}
-                            alt={clip.video_title ?? "Video"}
-                            className="h-10 w-16 shrink-0 rounded object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.05]">
-                            <svg
-                              className="h-5 w-5 text-red-500"
-                              viewBox="0 0 24 24"
-                              fill="currentColor"
-                            >
-                              <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-                            </svg>
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <a
-                            href={clip.video_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-blue-400 truncate"
-                          >
-                            <span className="truncate">{clip.video_title ?? clip.video_url}</span>
-                            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                          </a>
-                          {clip.channel_name && (
-                            <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                              <User className="h-3 w-3" />
-                              {clip.channel_name}
-                            </p>
+                    <div key={clip.id} className="rounded-lg border border-white/[0.06] bg-white/[0.02]">
+                      <div
+                        className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between cursor-pointer hover:bg-white/[0.02]"
+                        onClick={() => setExpandedClip(expandedClip === clip.id ? null : clip.id)}
+                      >
+                        <div className="flex items-center gap-3 overflow-hidden min-w-0">
+                          {clip.thumbnail_url ? (
+                            <img
+                              src={clip.thumbnail_url}
+                              alt={clip.video_title ?? "Video"}
+                              className="h-10 w-16 shrink-0 rounded object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.05]">
+                              <Film className="h-5 w-5 text-muted-foreground" />
+                            </div>
                           )}
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {formatDistanceToNow(new Date(clip.created_at), {
-                              addSuffix: true,
-                            })}
-                          </p>
+                          <div className="min-w-0">
+                            <a
+                              href={clip.video_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-blue-400 truncate"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <span className="truncate">{clip.video_title ?? clip.video_url}</span>
+                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                            </a>
+                            {clip.channel_name && (
+                              <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                                <User className="h-3 w-3" />
+                                {clip.channel_name}
+                              </p>
+                            )}
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {formatDistanceToNow(new Date(clip.created_at), {
+                                addSuffix: true,
+                              })}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {clip.generated_clips && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400">
+                              <Film className="h-3 w-3" />
+                              {clip.generated_clips.length} clips
+                            </span>
+                          )}
+                          <span
+                            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                              clip.status === "Completed"
+                                ? "bg-green-500/10 text-green-400"
+                                : clip.status === "Failed"
+                                  ? "bg-red-500/10 text-red-400"
+                                  : "bg-blue-500/10 text-blue-400"
+                            }`}
+                          >
+                            {clip.status === "Completed" ? (
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            ) : clip.status === "Failed" ? (
+                              <AlertCircle className="h-3.5 w-3.5" />
+                            ) : (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            )}
+                            {clip.status}
+                          </span>
+                          {expandedClip === clip.id ? (
+                            <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                          )}
                         </div>
                       </div>
-                      <span
-                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-                          clip.status === "Completed"
-                            ? "bg-green-500/10 text-green-400"
-                            : "bg-blue-500/10 text-blue-400"
-                        }`}
-                      >
-                        {clip.status === "Completed" ? (
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                        ) : (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+
+                      <AnimatePresence>
+                        {expandedClip === clip.id && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="border-t border-white/[0.06] p-4">
+                              {clip.status === "Processing" && (
+                                <div className="flex items-center gap-3 py-4">
+                                  <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                                  <span className="text-sm text-muted-foreground">
+                                    AI is analyzing the video transcript...
+                                  </span>
+                                </div>
+                              )}
+
+                              {clip.status === "Failed" && (
+                                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+                                  <p className="text-sm font-medium text-red-300">
+                                    Generation Failed
+                                  </p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {clip.error_message ?? "An unknown error occurred"}
+                                  </p>
+                                </div>
+                              )}
+
+                              {clip.status === "Completed" && clip.generated_clips && (
+                                <div className="space-y-4">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="text-sm font-semibold text-foreground">
+                                      Generated Clips ({clip.generated_clips.length})
+                                    </h4>
+                                    <button
+                                      onClick={() => setSelectedClipDetail(clip)}
+                                      className="text-xs text-blue-400 hover:text-blue-300"
+                                    >
+                                      View All Details
+                                    </button>
+                                  </div>
+
+                                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                    {clip.generated_clips.map((generatedClip) => (
+                                      <div
+                                        key={generatedClip.id}
+                                        className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 hover:bg-white/[0.04] transition-colors"
+                                      >
+                                        <div className="flex items-start justify-between gap-2">
+                                          <h5 className="text-sm font-medium text-foreground line-clamp-1">
+                                            {generatedClip.title}
+                                          </h5>
+                                          <button
+                                            onClick={() => handleCopyTimestamp(generatedClip)}
+                                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                                            title="Copy timestamp"
+                                          >
+                                            {copiedId === generatedClip.id ? (
+                                              <CheckCheck className="h-3.5 w-3.5 text-green-400" />
+                                            ) : (
+                                              <Copy className="h-3.5 w-3.5" />
+                                            )}
+                                          </button>
+                                        </div>
+
+                                        <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                                          <Clock className="h-3 w-3" />
+                                          {formatTime(generatedClip.start_time)} - {formatTime(generatedClip.end_time)}
+                                          <span className="text-muted-foreground/50">({generatedClip.duration}s)</span>
+                                        </div>
+
+                                        <div className="mt-2 flex items-center gap-2">
+                                          <ScoreBadge score={generatedClip.hook_score} label="Hook" />
+                                          <ScoreBadge score={generatedClip.viral_score} label="Viral" />
+                                        </div>
+
+                                        {generatedClip.transcript_snippet && (
+                                          <p className="mt-2 text-xs text-muted-foreground line-clamp-2 italic">
+                                            &ldquo;{generatedClip.transcript_snippet}&rdquo;
+                                          </p>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  {clip.transcript && (
+                                    <details className="group">
+                                      <summary className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+                                        <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+                                        View Full Transcript
+                                      </summary>
+                                      <div className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+                                        <pre className="whitespace-pre-wrap text-xs text-muted-foreground font-mono">
+                                          {clip.transcript}
+                                        </pre>
+                                      </div>
+                                    </details>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
                         )}
-                        {clip.status}
-                      </span>
+                      </AnimatePresence>
                     </div>
                   ))}
                 </div>
@@ -683,6 +937,119 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         </motion.div>
+
+        <AnimatePresence>
+          {selectedClipDetail && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+              onClick={() => setSelectedClipDetail(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl border border-white/[0.06] bg-background p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-foreground">
+                    Clip Details
+                  </h3>
+                  <button
+                    onClick={() => setSelectedClipDetail(null)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <AlertCircle className="h-5 w-5" />
+                  </button>
+                </div>
+
+                {selectedClipDetail.thumbnail_url && (
+                  <img
+                    src={selectedClipDetail.thumbnail_url}
+                    alt={selectedClipDetail.video_title ?? "Video"}
+                    className="w-full h-48 object-cover rounded-lg mb-4"
+                  />
+                )}
+
+                <h4 className="text-sm font-semibold text-foreground mb-2">
+                  {selectedClipDetail.video_title}
+                </h4>
+
+                {selectedClipDetail.generated_clips && (
+                  <div className="space-y-3 mt-4">
+                    {selectedClipDetail.generated_clips.map((clip, index) => (
+                      <div
+                        key={clip.id}
+                        className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-muted-foreground">
+                                #{index + 1}
+                              </span>
+                              <h5 className="text-sm font-semibold text-foreground">
+                                {clip.title}
+                              </h5>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {clip.reasoning}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => handleCopyTimestamp(clip)}
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                          >
+                            {copiedId === clip.id ? (
+                              <CheckCheck className="h-4 w-4 text-green-400" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-3">
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Clock className="h-3.5 w-3.5" />
+                            {formatTime(clip.start_time)} - {formatTime(clip.end_time)}
+                            <span className="text-muted-foreground/50">({clip.duration}s)</span>
+                          </div>
+                          <ScoreBadge score={clip.hook_score} label="Hook" />
+                          <ScoreBadge score={clip.viral_score} label="Viral" />
+                        </div>
+
+                        {clip.transcript_snippet && (
+                          <div className="mt-3 rounded-lg bg-white/[0.02] p-3">
+                            <p className="text-xs text-muted-foreground italic">
+                              &ldquo;{clip.transcript_snippet}&rdquo;
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {selectedClipDetail.transcript && (
+                  <details className="mt-4 group">
+                    <summary className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+                      <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+                      Full Transcript
+                    </summary>
+                    <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-white/[0.06] bg-white/[0.02] p-4">
+                      <pre className="whitespace-pre-wrap text-xs text-muted-foreground font-mono">
+                        {selectedClipDetail.transcript}
+                      </pre>
+                    </div>
+                  </details>
+                )}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
     </div>
   );
