@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { video_url } = await request.json();
+  const { video_url, video_title, thumbnail_url, channel_name } = await request.json();
 
   if (!video_url) {
     return NextResponse.json({ error: "Video URL is required" }, { status: 400 });
@@ -39,7 +39,13 @@ export async function POST(request: NextRequest) {
 
   const { data: clipRequest, error: insertError } = await supabase
     .from("clip_requests")
-    .insert({ user_id: user.id, video_url })
+    .insert({
+      user_id: user.id,
+      video_url,
+      video_title: video_title ?? null,
+      thumbnail_url: thumbnail_url ?? null,
+      channel_name: channel_name ?? null,
+    })
     .select()
     .single();
 
