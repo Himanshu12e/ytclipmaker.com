@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { extractTranscript, buildTranscriptText } from "@/lib/transcript";
 import { analyzeTranscriptForClips } from "@/lib/ai-clips";
 
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const isUnlimited = profileData.plan === "pro" || profileData.plan === "enterprise";
+  const isUnlimited = profileData.plan === "enterprise";
 
   if (!isUnlimited && profileData.free_clips_remaining <= 0) {
     return NextResponse.json({ error: "No free clips remaining" }, { status: 403 });
@@ -110,6 +111,8 @@ export async function POST(request: NextRequest) {
       .eq("id", user.id);
   }
 
+  console.log(`[Clip Generation] Starting for ${clipRequest.id} - URL: ${video_url}`);
+
   generateClipsAsync(clipRequest.id, video_url, video_title ?? "Unknown Video");
 
   return NextResponse.json({
@@ -123,11 +126,13 @@ async function generateClipsAsync(
   videoUrl: string,
   videoTitle: string
 ) {
-  const { createClient } = await import("@/lib/supabase/server");
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   try {
+    console.log(`[Clip Generation] Extracting transcript for ${clipRequestId}...`);
     const segments = await extractTranscript(videoUrl);
+    console.log(`[Clip Generation] Got ${segments.length} transcript segments`);
+
     const transcriptText = buildTranscriptText(segments);
 
     await supabase
@@ -135,7 +140,9 @@ async function generateClipsAsync(
       .update({ transcript: transcriptText })
       .eq("id", clipRequestId);
 
+    console.log(`[Clip Generation] Analyzing transcript with Gemini for ${clipRequestId}...`);
     const clips = await analyzeTranscriptForClips(segments, videoTitle);
+    console.log(`[Clip Generation] Generated ${clips.length} clips for ${clipRequestId}`);
 
     await supabase
       .from("clip_requests")
@@ -144,6 +151,8 @@ async function generateClipsAsync(
         status: "Completed",
       })
       .eq("id", clipRequestId);
+
+    console.log(`[Clip Generation] Completed successfully for ${clipRequestId}`);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error occurred";

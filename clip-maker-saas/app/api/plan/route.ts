@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const PLAN_LIMITS: Record<string, number> = {
   free: 15,
-  pro: 999999,
+  pro: 100,
   enterprise: 999999,
 };
 

@@ -221,7 +221,7 @@ function BillingContent() {
                           Clips Remaining
                         </p>
                         <p className="text-2xl font-bold">
-                          {currentPlanId === "pro" || currentPlanId === "enterprise"
+                          {currentPlanId === "enterprise"
                             ? "Unlimited"
                             : freeClipsRemaining}
                         </p>

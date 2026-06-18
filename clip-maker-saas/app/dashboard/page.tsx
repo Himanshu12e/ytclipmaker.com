@@ -46,7 +46,6 @@ interface GeneratedClip {
   start_time: number;
   end_time: number;
   duration: number;
-  hook_score: number;
   viral_score: number;
   transcript_snippet: string;
   reasoning: string;
@@ -330,7 +329,7 @@ export default function DashboardPage() {
   if (!user) return null;
 
   const clipsPercent = clipsLimit > 0 ? (clipsUsed / clipsLimit) * 100 : 0;
-  const isUnlimited = plan === "pro" || plan === "enterprise";
+  const isUnlimited = plan === "enterprise";
   const noCredits = !isUnlimited && freeClipsRemaining <= 0;
 
   return (
@@ -392,16 +391,16 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-muted-foreground">
                   <Sparkles className="h-4 w-4 text-blue-400" />
-                  Free Clips
+                  Clips Remaining
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold">
-                  {plan === "pro" || plan === "enterprise"
+                  {plan === "enterprise"
                     ? "Unlimited"
                     : freeClipsRemaining}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">
-                    {plan === "pro" || plan === "enterprise"
+                    {plan === "enterprise"
                       ? ""
                       : `/ ${clipsLimit} remaining`}
                   </span>
@@ -414,9 +413,17 @@ export default function DashboardPage() {
                     </p>
                   </>
                 )}
-                {(plan === "pro" || plan === "enterprise") && (
+                {plan === "pro" && (
+                  <>
+                    <Progress value={clipsPercent} className="mt-3" />
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {clipsUsed} clips used this month
+                    </p>
+                  </>
+                )}
+                {plan === "enterprise" && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Unlimited clips on {plan === "pro" ? "Pro" : "Enterprise"} plan
+                    Unlimited clips on Enterprise plan
                   </p>
                 )}
               </CardContent>
@@ -533,7 +540,7 @@ export default function DashboardPage() {
                       Generating...
                     </>
                   ) : noCredits ? (
-                    "No Credits Left"
+                    "No Clips Left"
                   ) : (
                     <>
                       Generate Clip
@@ -625,10 +632,10 @@ export default function DashboardPage() {
               {noCredits && (
                 <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4">
                   <p className="text-sm font-medium text-yellow-300">
-                    You&apos;ve used all your free clips!
+                    You&apos;ve used all your clips!
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Upgrade to Pro for unlimited clips and premium features.
+                    Upgrade to Pro for more clips and premium features.
                   </p>
                 </div>
               )}
@@ -666,7 +673,7 @@ export default function DashboardPage() {
                     </div>
                     <ul className="mt-4 space-y-2">
                       {[
-                        "Unlimited clips",
+                        "100 clips per month",
                         "Faster processing",
                         "4K export quality",
                         "Custom captions & branding",
@@ -681,7 +688,7 @@ export default function DashboardPage() {
                       href="/billing"
                       className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition-opacity hover:opacity-90"
                     >
-                      Start Pro Trial
+                      Upgrade to Pro
                       <ArrowRight className="h-4 w-4" />
                     </Link>
                   </div>
@@ -898,7 +905,6 @@ export default function DashboardPage() {
                                         </div>
 
                                         <div className="mt-2 flex items-center gap-2">
-                                          <ScoreBadge score={generatedClip.hook_score} label="Hook" />
                                           <ScoreBadge score={generatedClip.viral_score} label="Viral" />
                                         </div>
 
@@ -1017,7 +1023,6 @@ export default function DashboardPage() {
                             {formatTime(clip.start_time)} - {formatTime(clip.end_time)}
                             <span className="text-muted-foreground/50">({clip.duration}s)</span>
                           </div>
-                          <ScoreBadge score={clip.hook_score} label="Hook" />
                           <ScoreBadge score={clip.viral_score} label="Viral" />
                         </div>
 
