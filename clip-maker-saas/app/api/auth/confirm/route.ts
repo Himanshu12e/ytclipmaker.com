@@ -9,8 +9,8 @@ export async function POST(request: NextRequest) {
 
   if (!supabaseUrl || !serviceRoleKey) {
     return NextResponse.json(
-      { error: "Missing Supabase service role key" },
-      { status: 500 }
+      { error: "Auto-confirm not configured" },
+      { status: 400 }
     );
   }
 
