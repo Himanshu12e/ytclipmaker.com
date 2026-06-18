@@ -29,32 +29,42 @@ export async function POST(request: NextRequest) {
     .eq("id", user.id)
     .single();
 
+  if (profileError) {
+    console.error("[API /clips POST] profile select error:", profileError.message, profileError.code);
+  }
+
   if (profileError || !profile) {
-    const { error: insertErr } = await supabase.from("profiles").upsert(
-      {
-        id: user.id,
-        email: user.email ?? "",
-        plan: "free",
-        clips_limit: 15,
-        free_clips_remaining: 15,
-      },
-      { onConflict: "id" }
-    );
+    console.log("[API /clips POST] No profile found for user", user.id, "- attempting to create");
+
+    const { error: insertErr } = await supabase.from("profiles").insert({
+      id: user.id,
+      email: user.email ?? "",
+      plan: "free",
+      clips_limit: 15,
+      free_clips_remaining: 15,
+    });
 
     if (insertErr) {
-      return NextResponse.json({ error: "Failed to create profile" }, { status: 500 });
+      console.error("[API /clips POST] profile insert error:", insertErr.message, insertErr.code, insertErr.details);
+      return NextResponse.json({ error: "Failed to create profile", details: insertErr.message }, { status: 500 });
     }
 
-    const { data: newProfile } = await supabase
+    const { data: newProfile, error: refetchErr } = await supabase
       .from("profiles")
       .select("free_clips_remaining, clips_limit, plan")
       .eq("id", user.id)
       .single();
 
+    if (refetchErr) {
+      console.error("[API /clips POST] profile refetch error:", refetchErr.message);
+      return NextResponse.json({ error: "Failed to load new profile", details: refetchErr.message }, { status: 500 });
+    }
+
     profile = newProfile;
   }
 
   if (!profile) {
+    console.error("[API /clips POST] Profile still null after creation attempt for user", user.id);
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
@@ -117,16 +127,19 @@ export async function GET() {
     .single();
 
   if (!profile) {
-    await supabase.from("profiles").upsert(
-      {
-        id: user.id,
-        email: user.email ?? "",
-        plan: "free",
-        clips_limit: 15,
-        free_clips_remaining: 15,
-      },
-      { onConflict: "id" }
-    );
+    console.log("[API /clips GET] No profile found for user", user.id, "- attempting to create");
+
+    const { error: insertErr } = await supabase.from("profiles").insert({
+      id: user.id,
+      email: user.email ?? "",
+      plan: "free",
+      clips_limit: 15,
+      free_clips_remaining: 15,
+    });
+
+    if (insertErr) {
+      console.error("[API /clips GET] profile insert error:", insertErr.message, insertErr.code, insertErr.details);
+    }
 
     const { data: newProfile } = await supabase
       .from("profiles")

@@ -93,16 +93,16 @@ export default function SignupPage() {
 
       const result = await res.json();
 
-      await supabase.from("profiles").upsert(
-        {
-          id: data.user.id,
-          email: email,
-          plan: "free",
-          clips_limit: 15,
-          free_clips_remaining: 15,
-        },
-        { onConflict: "id" }
-      );
+      const profileRes = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const profileResult = await profileRes.json();
+
+      if (!profileRes.ok) {
+        console.error("[Signup] Failed to create profile:", profileResult);
+      }
 
       if (result.success && data.session) {
         login(email);
