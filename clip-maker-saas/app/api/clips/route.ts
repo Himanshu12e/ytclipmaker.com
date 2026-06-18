@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { extractTranscript, buildTranscriptText } from "@/lib/transcript";
 import { analyzeTranscriptForClips } from "@/lib/ai-clips";
+import { generateClipFiles, cleanupTempFiles } from "@/lib/video-processor";
+import { uploadMultipleClips } from "@/lib/storage";
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -113,7 +115,7 @@ export async function POST(request: NextRequest) {
 
   console.log(`[Clip Generation] Starting for ${clipRequest.id} - URL: ${video_url}`);
 
-  generateClipsAsync(clipRequest.id, video_url, video_title ?? "Unknown Video");
+  generateClipsAsync(clipRequest.id, video_url, video_title ?? "Unknown Video", user.id);
 
   return NextResponse.json({
     clip_request: clipRequest,
@@ -124,7 +126,8 @@ export async function POST(request: NextRequest) {
 async function generateClipsAsync(
   clipRequestId: string,
   videoUrl: string,
-  videoTitle: string
+  videoTitle: string,
+  userId: string
 ) {
   const supabase = createServiceClient();
 
@@ -146,13 +149,44 @@ async function generateClipsAsync(
 
     await supabase
       .from("clip_requests")
+      .update({ generated_clips: clips })
+      .eq("id", clipRequestId);
+
+    console.log(`[Clip Generation] Downloading video and cutting clips for ${clipRequestId}...`);
+
+    const clipFiles = await generateClipFiles(
+      videoUrl,
+      clipRequestId,
+      clips.map(c => ({
+        id: c.id,
+        start_time: c.start_time,
+        end_time: c.end_time,
+      }))
+    );
+
+    console.log(`[Clip Generation] Generated ${clipFiles.length} clip files, uploading to storage...`);
+
+    const uploadResults = await uploadMultipleClips(userId, clipRequestId, clipFiles);
+
+    const clipFilesMap = uploadResults.reduce(
+      (acc, result) => {
+        acc[result.clipId] = result.url;
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+
+    await supabase
+      .from("clip_requests")
       .update({
-        generated_clips: clips,
+        clip_files: clipFilesMap,
         status: "Completed",
       })
       .eq("id", clipRequestId);
 
     console.log(`[Clip Generation] Completed successfully for ${clipRequestId}`);
+
+    await cleanupTempFiles(clipRequestId);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error occurred";
@@ -166,6 +200,8 @@ async function generateClipsAsync(
         error_message: errorMessage,
       })
       .eq("id", clipRequestId);
+
+    await cleanupTempFiles(clipRequestId);
   }
 }
 

@@ -1,0 +1,16 @@
+
+> clip-maker-saas@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.9 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://10.229.15.153:3000
+- Environments: .env.local
+✓ Ready in 550ms
+⚠ The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+
+ GET /dashboard 200 in 842ms (next.js: 162ms, proxy.ts: 421ms, application-code: 259ms)
+ GET /api/clips 200 in 932ms (next.js: 83ms, proxy.ts: 258ms, application-code: 590ms)
+ GET /api/clips 200 in 677ms (next.js: 4ms, proxy.ts: 153ms, application-code: 519ms)
+ POST /login 200 in 99ms (next.js: 37ms, proxy.ts: 3ms, application-code: 59ms)
+[?25h

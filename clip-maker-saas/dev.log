@@ -1,0 +1,17 @@
+▲ Next.js 16.2.9 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://10.229.15.153:3000
+- Environments: .env.local
+✓ Ready in 1243ms
+⚠ The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+
+ GET /dashboard 200 in 1833ms (next.js: 437ms, proxy.ts: 668ms, application-code: 728ms)
+ GET /api/clips 200 in 1375ms (next.js: 213ms, proxy.ts: 175ms, application-code: 987ms)
+ GET /api/clips 200 in 730ms (next.js: 5ms, proxy.ts: 167ms, application-code: 558ms)
+ GET /dashboard 200 in 1234ms (next.js: 34ms, proxy.ts: 1146ms, application-code: 53ms)
+ GET /dashboard 200 in 322ms (next.js: 10ms, proxy.ts: 273ms, application-code: 39ms)
+ GET /dashboard 200 in 206ms (next.js: 4ms, proxy.ts: 185ms, application-code: 17ms)
+ GET /dashboard 200 in 314ms (next.js: 35ms, proxy.ts: 257ms, application-code: 22ms)
+[?25h
+
+C:\ytclipmaker.com\clip-maker-saas>

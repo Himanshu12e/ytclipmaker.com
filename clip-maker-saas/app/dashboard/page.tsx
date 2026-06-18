@@ -24,6 +24,9 @@ import {
   Film,
   Copy,
   CheckCheck,
+  Download,
+  RefreshCw,
+  X,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/supabase/auth-provider";
@@ -31,6 +34,8 @@ import { signOut } from "@/lib/store";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { formatDistanceToNow } from "date-fns";
+import { VideoPlayer } from "@/components/video-player";
+import { DownloadClipButton } from "@/components/download-clip-button";
 
 interface VideoMetadata {
   video_id: string;
@@ -62,6 +67,7 @@ interface ClipRequest {
   generated_clips: GeneratedClip[] | null;
   transcript: string | null;
   error_message: string | null;
+  clip_files?: Record<string, string> | null;
 }
 
 function isValidYouTubeUrl(url: string): boolean {
@@ -108,9 +114,13 @@ export default function DashboardPage() {
   const [metadataError, setMetadataError] = useState(false);
   const [expandedClip, setExpandedClip] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedTranscriptId, setCopiedTranscriptId] = useState<string | null>(null);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationStep, setGenerationStep] = useState("");
   const [selectedClipDetail, setSelectedClipDetail] = useState<ClipRequest | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [playingClipUrl, setPlayingClipUrl] = useState<string | null>(null);
+  const [playingClipTitle, setPlayingClipTitle] = useState<string>("");
 
   const fetchClips = useCallback(async () => {
     try {
@@ -192,12 +202,11 @@ export default function DashboardPage() {
     if (!generating) return;
 
     const steps = [
-      { progress: 10, step: "Validating URL..." },
-      { progress: 25, step: "Extracting transcript..." },
-      { progress: 40, step: "Fetching video data..." },
-      { progress: 60, step: "Analyzing with AI..." },
-      { progress: 80, step: "Finding best moments..." },
-      { progress: 90, step: "Generating clips..." },
+      { progress: 5, step: "transcript" },
+      { progress: 20, step: "ai" },
+      { progress: 45, step: "download" },
+      { progress: 70, step: "cut" },
+      { progress: 90, step: "upload" },
     ];
 
     let currentStep = 0;
@@ -207,7 +216,7 @@ export default function DashboardPage() {
         setGenerationStep(steps[currentStep].step);
         currentStep++;
       }
-    }, 3000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [generating]);
@@ -230,7 +239,7 @@ export default function DashboardPage() {
 
     setGenerating(true);
     setGenerationProgress(0);
-    setGenerationStep("Starting...");
+    setGenerationStep("transcript");
 
     try {
       const res = await fetch("/api/clips", {
@@ -264,12 +273,12 @@ export default function DashboardPage() {
     } finally {
       setGenerating(false);
       setGenerationProgress(100);
-      setGenerationStep("Done!");
+      setGenerationStep("done");
     }
   }
 
   async function pollClipStatus(clipId: string) {
-    const maxAttempts = 60;
+    const maxAttempts = 120;
     let attempts = 0;
 
     const poll = async () => {
@@ -287,7 +296,8 @@ export default function DashboardPage() {
             );
 
             if (clip.status === "Completed") {
-              toast.success("Clips generated successfully!");
+              const clipCount = clip.clip_files ? Object.keys(clip.clip_files).length : 0;
+              toast.success(`${clipCount} MP4 clip${clipCount !== 1 ? "s" : ""} generated successfully!`);
             } else {
               toast.error(clip.error_message ?? "Clip generation failed");
             }
@@ -305,12 +315,54 @@ export default function DashboardPage() {
     setTimeout(poll, 3000);
   }
 
+  async function handleRetry(clipId: string) {
+    setRetryingId(clipId);
+    try {
+      const res = await fetch(`/api/clips/${clipId}/retry`, {
+        method: "POST",
+      });
+
+      if (res.ok) {
+        toast.success("Retry started! Processing clips...");
+        setClips((prev) =>
+          prev.map((c) =>
+            c.id === clipId ? { ...c, status: "Processing", error_message: null } : c
+          )
+        );
+        pollClipStatus(clipId);
+      } else {
+        const data = await res.json();
+        toast.error(data.error ?? "Failed to retry");
+      }
+    } catch {
+      toast.error("Failed to retry generation");
+    } finally {
+      setRetryingId(null);
+    }
+  }
+
   function handleCopyTimestamp(clip: GeneratedClip) {
     const timestamp = `${formatTime(clip.start_time)} - ${formatTime(clip.end_time)}`;
     navigator.clipboard.writeText(timestamp);
     setCopiedId(clip.id);
     toast.success("Timestamp copied!");
     setTimeout(() => setCopiedId(null), 2000);
+  }
+
+  function handleCopyTranscript(clip: GeneratedClip) {
+    if (!clip.transcript_snippet) {
+      toast.error("No transcript available for this clip");
+      return;
+    }
+    navigator.clipboard.writeText(clip.transcript_snippet);
+    setCopiedTranscriptId(clip.id);
+    toast.success("Transcript copied!");
+    setTimeout(() => setCopiedTranscriptId(null), 2000);
+  }
+
+  function handlePlayClip(clipUrl: string, clipTitle: string) {
+    setPlayingClipUrl(clipUrl);
+    setPlayingClipTitle(clipTitle);
   }
 
   async function handleLogout() {
@@ -616,16 +668,25 @@ export default function DashboardPage() {
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
-                  className="mt-4 rounded-lg border border-blue-500/20 bg-blue-500/5 p-4"
+                  className="mt-4"
                 >
-                  <div className="flex items-center gap-3 mb-3">
-                    <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
-                    <span className="text-sm font-medium text-blue-300">{generationStep}</span>
+                  <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+                    <div className="flex items-center gap-3 mb-3">
+                      <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                      <span className="text-sm font-medium text-blue-300">
+                        {generationStep === "transcript" && "Extracting transcript..."}
+                        {generationStep === "ai" && "AI analyzing viral moments..."}
+                        {generationStep === "download" && "Downloading source video..."}
+                        {generationStep === "cut" && "Cutting clips..."}
+                        {generationStep === "upload" && "Uploading to cloud..."}
+                        {generationStep === "done" && "Done!"}
+                      </span>
+                    </div>
+                    <Progress value={generationProgress} className="h-2" />
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      This may take a few minutes for longer videos. We&apos;re downloading and processing your clips.
+                    </p>
                   </div>
-                  <Progress value={generationProgress} className="h-2" />
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    AI is analyzing the video transcript to find the best moments...
-                  </p>
                 </motion.div>
               )}
 
@@ -805,6 +866,12 @@ export default function DashboardPage() {
                               {clip.generated_clips.length} clips
                             </span>
                           )}
+                          {clip.clip_files && Object.keys(clip.clip_files).length > 0 && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-400">
+                              <Download className="h-3 w-3" />
+                              MP4
+                            </span>
+                          )}
                           <span
                             className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
                               clip.status === "Completed"
@@ -845,19 +912,38 @@ export default function DashboardPage() {
                                 <div className="flex items-center gap-3 py-4">
                                   <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
                                   <span className="text-sm text-muted-foreground">
-                                    AI is analyzing the video transcript...
+                                    Processing video... This may take a few minutes.
                                   </span>
                                 </div>
                               )}
 
                               {clip.status === "Failed" && (
                                 <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
-                                  <p className="text-sm font-medium text-red-300">
-                                    Generation Failed
-                                  </p>
-                                  <p className="mt-1 text-xs text-muted-foreground">
-                                    {clip.error_message ?? "An unknown error occurred"}
-                                  </p>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-sm font-medium text-red-300">
+                                        Generation Failed
+                                      </p>
+                                      <p className="mt-1 text-xs text-muted-foreground">
+                                        {clip.error_message ?? "An unknown error occurred"}
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRetry(clip.id);
+                                      }}
+                                      disabled={retryingId === clip.id}
+                                      className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 disabled:opacity-50"
+                                    >
+                                      {retryingId === clip.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <RefreshCw className="h-3 w-3" />
+                                      )}
+                                      Retry
+                                    </button>
+                                  </div>
                                 </div>
                               )}
 
@@ -876,45 +962,81 @@ export default function DashboardPage() {
                                   </div>
 
                                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                                    {clip.generated_clips.map((generatedClip) => (
-                                      <div
-                                        key={generatedClip.id}
-                                        className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 hover:bg-white/[0.04] transition-colors"
-                                      >
-                                        <div className="flex items-start justify-between gap-2">
-                                          <h5 className="text-sm font-medium text-foreground line-clamp-1">
-                                            {generatedClip.title}
-                                          </h5>
-                                          <button
-                                            onClick={() => handleCopyTimestamp(generatedClip)}
-                                            className="shrink-0 text-muted-foreground hover:text-foreground"
-                                            title="Copy timestamp"
-                                          >
-                                            {copiedId === generatedClip.id ? (
-                                              <CheckCheck className="h-3.5 w-3.5 text-green-400" />
-                                            ) : (
-                                              <Copy className="h-3.5 w-3.5" />
-                                            )}
-                                          </button>
-                                        </div>
+                                    {clip.generated_clips.map((generatedClip) => {
+                                      const clipUrl = clip.clip_files?.[generatedClip.id];
+                                      return (
+                                        <div
+                                          key={generatedClip.id}
+                                          className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 hover:bg-white/[0.04] transition-colors"
+                                        >
+                                          <div className="flex items-start justify-between gap-2">
+                                            <h5 className="text-sm font-medium text-foreground line-clamp-1">
+                                              {generatedClip.title}
+                                            </h5>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                              <button
+                                                onClick={() => handleCopyTranscript(generatedClip)}
+                                                className="text-muted-foreground hover:text-foreground"
+                                                title="Copy transcript"
+                                              >
+                                                {copiedTranscriptId === generatedClip.id ? (
+                                                  <CheckCheck className="h-3.5 w-3.5 text-green-400" />
+                                                ) : (
+                                                  <Copy className="h-3.5 w-3.5" />
+                                                )}
+                                              </button>
+                                              <button
+                                                onClick={() => handleCopyTimestamp(generatedClip)}
+                                                className="text-muted-foreground hover:text-foreground"
+                                                title="Copy timestamp"
+                                              >
+                                                {copiedId === generatedClip.id ? (
+                                                  <CheckCheck className="h-3.5 w-3.5 text-green-400" />
+                                                ) : (
+                                                  <Clock className="h-3.5 w-3.5" />
+                                                )}
+                                              </button>
+                                            </div>
+                                          </div>
 
-                                        <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                                          <Clock className="h-3 w-3" />
-                                          {formatTime(generatedClip.start_time)} - {formatTime(generatedClip.end_time)}
-                                          <span className="text-muted-foreground/50">({generatedClip.duration}s)</span>
-                                        </div>
+                                          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                                            <Clock className="h-3 w-3" />
+                                            {formatTime(generatedClip.start_time)} - {formatTime(generatedClip.end_time)}
+                                            <span className="text-muted-foreground/50">({generatedClip.duration}s)</span>
+                                          </div>
 
-                                        <div className="mt-2 flex items-center gap-2">
-                                          <ScoreBadge score={generatedClip.viral_score} label="Viral" />
-                                        </div>
+                                          <div className="mt-2 flex items-center gap-2">
+                                            <ScoreBadge score={generatedClip.viral_score} label="Viral" />
+                                          </div>
 
-                                        {generatedClip.transcript_snippet && (
-                                          <p className="mt-2 text-xs text-muted-foreground line-clamp-2 italic">
-                                            &ldquo;{generatedClip.transcript_snippet}&rdquo;
-                                          </p>
-                                        )}
-                                      </div>
-                                    ))}
+                                          {generatedClip.transcript_snippet && (
+                                            <p className="mt-2 text-xs text-muted-foreground line-clamp-2 italic">
+                                              &ldquo;{generatedClip.transcript_snippet}&rdquo;
+                                            </p>
+                                          )}
+
+                                          {clipUrl && (
+                                            <div className="mt-3 flex items-center gap-2">
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handlePlayClip(clipUrl, generatedClip.title);
+                                                }}
+                                                className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-white/10"
+                                              >
+                                                <Play className="h-3 w-3 fill-current" />
+                                                Preview
+                                              </button>
+                                              <DownloadClipButton
+                                                clipUrl={clipUrl}
+                                                clipTitle={generatedClip.title}
+                                                className="!px-2.5 !py-1 !text-xs"
+                                              />
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
 
                                   {clip.transcript && (
@@ -957,7 +1079,7 @@ export default function DashboardPage() {
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
-                className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl border border-white/[0.06] bg-background p-6"
+                className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl border border-white/[0.06] bg-background p-4 sm:p-6"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-center justify-between mb-4">
@@ -968,7 +1090,7 @@ export default function DashboardPage() {
                     onClick={() => setSelectedClipDetail(null)}
                     className="text-muted-foreground hover:text-foreground"
                   >
-                    <AlertCircle className="h-5 w-5" />
+                    <X className="h-5 w-5" />
                   </button>
                 </div>
 
@@ -985,56 +1107,91 @@ export default function DashboardPage() {
                 </h4>
 
                 {selectedClipDetail.generated_clips && (
-                  <div className="space-y-3 mt-4">
-                    {selectedClipDetail.generated_clips.map((clip, index) => (
-                      <div
-                        key={clip.id}
-                        className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-4"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-muted-foreground">
-                                #{index + 1}
-                              </span>
-                              <h5 className="text-sm font-semibold text-foreground">
-                                {clip.title}
-                              </h5>
+                  <div className="space-y-4 mt-4">
+                    {selectedClipDetail.generated_clips.map((clip, index) => {
+                      const clipUrl = selectedClipDetail.clip_files?.[clip.id];
+                      return (
+                        <div
+                          key={clip.id}
+                          className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-4"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-muted-foreground">
+                                  #{index + 1}
+                                </span>
+                                <h5 className="text-sm font-semibold text-foreground">
+                                  {clip.title}
+                                </h5>
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {clip.reasoning}
+                              </p>
                             </div>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {clip.reasoning}
-                            </p>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => handleCopyTranscript(clip)}
+                                className="text-muted-foreground hover:text-foreground"
+                                title="Copy transcript"
+                              >
+                                {copiedTranscriptId === clip.id ? (
+                                  <CheckCheck className="h-4 w-4 text-green-400" />
+                                ) : (
+                                  <Copy className="h-4 w-4" />
+                                )}
+                              </button>
+                              <button
+                                onClick={() => handleCopyTimestamp(clip)}
+                                className="text-muted-foreground hover:text-foreground"
+                                title="Copy timestamp"
+                              >
+                                {copiedId === clip.id ? (
+                                  <CheckCheck className="h-4 w-4 text-green-400" />
+                                ) : (
+                                  <Clock className="h-4 w-4" />
+                                )}
+                              </button>
+                            </div>
                           </div>
-                          <button
-                            onClick={() => handleCopyTimestamp(clip)}
-                            className="shrink-0 text-muted-foreground hover:text-foreground"
-                          >
-                            {copiedId === clip.id ? (
-                              <CheckCheck className="h-4 w-4 text-green-400" />
-                            ) : (
-                              <Copy className="h-4 w-4" />
-                            )}
-                          </button>
-                        </div>
 
-                        <div className="mt-3 flex flex-wrap items-center gap-3">
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <Clock className="h-3.5 w-3.5" />
-                            {formatTime(clip.start_time)} - {formatTime(clip.end_time)}
-                            <span className="text-muted-foreground/50">({clip.duration}s)</span>
-                          </div>
-                          <ScoreBadge score={clip.viral_score} label="Viral" />
-                        </div>
+                          {clipUrl && (
+                            <div className="mt-4">
+                              <VideoPlayer
+                                src={clipUrl}
+                                poster={selectedClipDetail.thumbnail_url ?? undefined}
+                                title={clip.title}
+                                startTime={clip.start_time}
+                                endTime={clip.end_time}
+                              />
+                              <div className="mt-3 flex flex-wrap items-center gap-3">
+                                <DownloadClipButton
+                                  clipUrl={clipUrl}
+                                  clipTitle={clip.title}
+                                />
+                              </div>
+                            </div>
+                          )}
 
-                        {clip.transcript_snippet && (
-                          <div className="mt-3 rounded-lg bg-white/[0.02] p-3">
-                            <p className="text-xs text-muted-foreground italic">
-                              &ldquo;{clip.transcript_snippet}&rdquo;
-                            </p>
+                          <div className="mt-3 flex flex-wrap items-center gap-3">
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Clock className="h-3.5 w-3.5" />
+                              {formatTime(clip.start_time)} - {formatTime(clip.end_time)}
+                              <span className="text-muted-foreground/50">({clip.duration}s)</span>
+                            </div>
+                            <ScoreBadge score={clip.viral_score} label="Viral" />
                           </div>
-                        )}
-                      </div>
-                    ))}
+
+                          {clip.transcript_snippet && (
+                            <div className="mt-3 rounded-lg bg-white/[0.02] p-3">
+                              <p className="text-xs text-muted-foreground italic">
+                                &ldquo;{clip.transcript_snippet}&rdquo;
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1051,6 +1208,42 @@ export default function DashboardPage() {
                     </div>
                   </details>
                 )}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {playingClipUrl && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+              onClick={() => setPlayingClipUrl(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="w-full max-w-3xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-white">
+                    {playingClipTitle}
+                  </h4>
+                  <button
+                    onClick={() => setPlayingClipUrl(null)}
+                    className="text-white/70 hover:text-white"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <VideoPlayer
+                  src={playingClipUrl}
+                  title={playingClipTitle}
+                />
               </motion.div>
             </motion.div>
           )}
