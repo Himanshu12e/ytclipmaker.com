@@ -27,6 +27,7 @@ import {
   Download,
   RefreshCw,
   X,
+  Square,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/supabase/auth-provider";
@@ -36,6 +37,7 @@ import { Progress } from "@/components/ui/progress";
 import { formatDistanceToNow } from "date-fns";
 import { VideoPlayer } from "@/components/video-player";
 import { DownloadClipButton } from "@/components/download-clip-button";
+import { ProcessingProgress } from "@/components/processing-progress";
 
 interface VideoMetadata {
   video_id: string;
@@ -43,6 +45,7 @@ interface VideoMetadata {
   thumbnail_url: string;
   channel_name: string;
   youtube_url: string;
+  duration_seconds: number | null;
 }
 
 interface GeneratedClip {
@@ -68,6 +71,12 @@ interface ClipRequest {
   transcript: string | null;
   error_message: string | null;
   clip_files?: Record<string, string> | null;
+  processing_stage?: string | null;
+  clips_generated?: number | null;
+  completed_at?: string | null;
+  video_duration_seconds?: number | null;
+  platform?: string | null;
+  clip_length?: string | null;
 }
 
 function isValidYouTubeUrl(url: string): boolean {
@@ -82,6 +91,15 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
+function formatDuration(seconds: number | null): string {
+  if (!seconds) return "";
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  return `${mins}m ${secs}s`;
+}
+
 function ScoreBadge({ score, label }: { score: number; label: string }) {
   const color =
     score >= 8
@@ -93,6 +111,23 @@ function ScoreBadge({ score, label }: { score: number; label: string }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>
       {label}: {score}/10
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const config: Record<string, { color: string; icon: typeof CheckCircle2 }> = {
+    Completed: { color: "bg-green-500/10 text-green-400", icon: CheckCircle2 },
+    Failed: { color: "bg-red-500/10 text-red-400", icon: AlertCircle },
+    Processing: { color: "bg-blue-500/10 text-blue-400", icon: Loader2 },
+    Cancelled: { color: "bg-yellow-500/10 text-yellow-400", icon: AlertCircle },
+  };
+  const { color, icon: Icon } = config[status] || config.Processing;
+
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>
+      <Icon className={`h-3.5 w-3.5 ${status === "Processing" ? "animate-spin" : ""}`} />
+      {status}
     </span>
   );
 }
@@ -115,12 +150,15 @@ export default function DashboardPage() {
   const [expandedClip, setExpandedClip] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedTranscriptId, setCopiedTranscriptId] = useState<string | null>(null);
-  const [generationProgress, setGenerationProgress] = useState(0);
-  const [generationStep, setGenerationStep] = useState("");
   const [selectedClipDetail, setSelectedClipDetail] = useState<ClipRequest | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [playingClipUrl, setPlayingClipUrl] = useState<string | null>(null);
   const [playingClipTitle, setPlayingClipTitle] = useState<string>("");
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [activePollingId, setActivePollingId] = useState<string | null>(null);
+  const [activePollingInterval, setActivePollingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [platform, setPlatform] = useState<string>("youtube_shorts");
+  const [clipLength, setClipLength] = useState<string>("auto");
 
   const fetchClips = useCallback(async () => {
     try {
@@ -199,27 +237,12 @@ export default function DashboardPage() {
   }, [url]);
 
   useEffect(() => {
-    if (!generating) return;
-
-    const steps = [
-      { progress: 5, step: "transcript" },
-      { progress: 20, step: "ai" },
-      { progress: 45, step: "download" },
-      { progress: 70, step: "cut" },
-      { progress: 90, step: "upload" },
-    ];
-
-    let currentStep = 0;
-    const interval = setInterval(() => {
-      if (currentStep < steps.length) {
-        setGenerationProgress(steps[currentStep].progress);
-        setGenerationStep(steps[currentStep].step);
-        currentStep++;
+    return () => {
+      if (activePollingInterval) {
+        clearInterval(activePollingInterval);
       }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [generating]);
+    };
+  }, [activePollingInterval]);
 
   async function handleGenerate() {
     if (!url.trim()) {
@@ -238,8 +261,6 @@ export default function DashboardPage() {
     }
 
     setGenerating(true);
-    setGenerationProgress(0);
-    setGenerationStep("transcript");
 
     try {
       const res = await fetch("/api/clips", {
@@ -250,6 +271,9 @@ export default function DashboardPage() {
           video_title: preview?.title ?? null,
           thumbnail_url: preview?.thumbnail_url ?? null,
           channel_name: preview?.channel_name ?? null,
+          video_duration_seconds: preview?.duration_seconds ?? null,
+          platform,
+          clip_length: clipLength,
         }),
       });
 
@@ -267,22 +291,29 @@ export default function DashboardPage() {
       setPreview(null);
       toast.success("Clip generation started! AI is analyzing the video...");
 
-      pollClipStatus(data.clip_request.id);
+      startPolling(data.clip_request.id);
     } catch {
       toast.error("Something went wrong");
     } finally {
       setGenerating(false);
-      setGenerationProgress(100);
-      setGenerationStep("done");
     }
   }
 
-  async function pollClipStatus(clipId: string) {
-    const maxAttempts = 120;
+  function startPolling(clipId: string) {
+    if (activePollingInterval) {
+      clearInterval(activePollingInterval);
+    }
+
+    const maxAttempts = 900; // 30 minutes
     let attempts = 0;
 
-    const poll = async () => {
-      if (attempts >= maxAttempts) return;
+    const interval = setInterval(async () => {
+      if (attempts >= maxAttempts) {
+        clearInterval(interval);
+        setActivePollingId(null);
+        setActivePollingInterval(null);
+        return;
+      }
 
       try {
         const res = await fetch(`/api/clips/${clipId}`);
@@ -290,17 +321,32 @@ export default function DashboardPage() {
           const data = await res.json();
           const clip = data.clip;
 
-          if (clip.status === "Completed" || clip.status === "Failed") {
-            setClips((prev) =>
-              prev.map((c) => (c.id === clipId ? { ...c, ...clip } : c))
-            );
+          setClips((prev) =>
+            prev.map((c) => (c.id === clipId ? { ...c, ...clip } : c))
+          );
 
-            if (clip.status === "Completed") {
-              const clipCount = clip.clip_files ? Object.keys(clip.clip_files).length : 0;
-              toast.success(`${clipCount} MP4 clip${clipCount !== 1 ? "s" : ""} generated successfully!`);
-            } else {
-              toast.error(clip.error_message ?? "Clip generation failed");
-            }
+          if (clip.status === "Completed") {
+            clearInterval(interval);
+            setActivePollingId(null);
+            setActivePollingInterval(null);
+            const clipCount = clip.clip_files ? Object.keys(clip.clip_files).length : 0;
+            toast.success(`${clipCount} MP4 clip${clipCount !== 1 ? "s" : ""} generated successfully!`);
+            return;
+          }
+
+          if (clip.status === "Failed") {
+            clearInterval(interval);
+            setActivePollingId(null);
+            setActivePollingInterval(null);
+            toast.error(clip.error_message ?? "Clip generation failed");
+            return;
+          }
+
+          if (clip.status === "Cancelled") {
+            clearInterval(interval);
+            setActivePollingId(null);
+            setActivePollingInterval(null);
+            toast.success("Processing cancelled successfully.");
             return;
           }
         }
@@ -309,10 +355,41 @@ export default function DashboardPage() {
       }
 
       attempts++;
-      setTimeout(poll, 2000);
-    };
+    }, 2000);
 
-    setTimeout(poll, 3000);
+    setActivePollingId(clipId);
+    setActivePollingInterval(interval);
+  }
+
+  async function handleCancel(clipId: string) {
+    setCancellingId(clipId);
+    try {
+      const res = await fetch(`/api/clips/${clipId}/cancel`, {
+        method: "POST",
+      });
+
+      if (res.ok) {
+        setClips((prev) =>
+          prev.map((c) =>
+            c.id === clipId ? { ...c, status: "Cancelled", processing_stage: null } : c
+          )
+        );
+        toast.success("Processing cancelled successfully.");
+
+        if (activePollingId === clipId && activePollingInterval) {
+          clearInterval(activePollingInterval);
+          setActivePollingId(null);
+          setActivePollingInterval(null);
+        }
+      } else {
+        const data = await res.json();
+        toast.error(data.error ?? "Failed to cancel");
+      }
+    } catch {
+      toast.error("Failed to cancel processing");
+    } finally {
+      setCancellingId(null);
+    }
   }
 
   async function handleRetry(clipId: string) {
@@ -326,10 +403,10 @@ export default function DashboardPage() {
         toast.success("Retry started! Processing clips...");
         setClips((prev) =>
           prev.map((c) =>
-            c.id === clipId ? { ...c, status: "Processing", error_message: null } : c
+            c.id === clipId ? { ...c, status: "Processing", error_message: null, processing_stage: "metadata" } : c
           )
         );
-        pollClipStatus(clipId);
+        startPolling(clipId);
       } else {
         const data = await res.json();
         toast.error(data.error ?? "Failed to retry");
@@ -383,6 +460,7 @@ export default function DashboardPage() {
   const clipsPercent = clipsLimit > 0 ? (clipsUsed / clipsLimit) * 100 : 0;
   const isUnlimited = plan === "enterprise";
   const noCredits = !isUnlimited && freeClipsRemaining <= 0;
+  const isLongVideo = preview?.duration_seconds ? preview.duration_seconds > 3600 : false;
 
   return (
     <div className="min-h-screen bg-background">
@@ -457,19 +535,11 @@ export default function DashboardPage() {
                       : `/ ${clipsLimit} remaining`}
                   </span>
                 </div>
-                {plan === "free" && (
+                {plan !== "enterprise" && (
                   <>
                     <Progress value={clipsPercent} className="mt-3" />
                     <p className="mt-2 text-xs text-muted-foreground">
                       {clipsUsed} clips used
-                    </p>
-                  </>
-                )}
-                {plan === "pro" && (
-                  <>
-                    <Progress value={clipsPercent} className="mt-3" />
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {clipsUsed} clips used this month
                     </p>
                   </>
                 )}
@@ -601,6 +671,7 @@ export default function DashboardPage() {
                   )}
                 </button>
               </div>
+
               {url.trim() && !isValidYouTubeUrl(url) && !generating && (
                 <p className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
                   <AlertCircle className="h-3.5 w-3.5" />
@@ -643,6 +714,12 @@ export default function DashboardPage() {
                         <User className="h-3.5 w-3.5" />
                         <span>{preview.channel_name}</span>
                       </div>
+                      {preview.duration_seconds && (
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <Clock className="h-3.5 w-3.5" />
+                          <span>{formatDuration(preview.duration_seconds)}</span>
+                        </div>
+                      )}
                       <a
                         href={preview.youtube_url}
                         target="_blank"
@@ -652,6 +729,45 @@ export default function DashboardPage() {
                         <ExternalLink className="h-3 w-3" />
                         Watch on YouTube
                       </a>
+                    </div>
+                  </div>
+
+                  {isLongVideo && (
+                    <div className="border-t border-yellow-500/20 bg-yellow-500/5 px-4 py-3">
+                      <p className="text-xs text-yellow-300">
+                        ⚠️ Long videos (over 60 minutes) may take significantly longer to process and could fail due to AI/transcript limits. For best results, use videos under 60 minutes.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="border-t border-white/[0.06] p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <div className="flex-1">
+                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Platform</label>
+                        <select
+                          value={platform}
+                          onChange={(e) => setPlatform(e.target.value)}
+                          className="flex h-9 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                        >
+                          <option value="youtube_shorts">YouTube Shorts</option>
+                          <option value="instagram_reels">Instagram Reels</option>
+                          <option value="tiktok">TikTok</option>
+                          <option value="universal_vertical">Universal Vertical</option>
+                        </select>
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Clip Length</label>
+                        <select
+                          value={clipLength}
+                          onChange={(e) => setClipLength(e.target.value)}
+                          className="flex h-9 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="15">15 seconds</option>
+                          <option value="30">30 seconds</option>
+                          <option value="60">60 seconds</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
                 </motion.div>
@@ -674,17 +790,11 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-3 mb-3">
                       <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
                       <span className="text-sm font-medium text-blue-300">
-                        {generationStep === "transcript" && "Extracting transcript..."}
-                        {generationStep === "ai" && "AI analyzing viral moments..."}
-                        {generationStep === "download" && "Downloading source video..."}
-                        {generationStep === "cut" && "Cutting clips..."}
-                        {generationStep === "upload" && "Uploading to cloud..."}
-                        {generationStep === "done" && "Done!"}
+                        Processing your video...
                       </span>
                     </div>
-                    <Progress value={generationProgress} className="h-2" />
                     <p className="mt-2 text-xs text-muted-foreground">
-                      This may take a few minutes for longer videos. We&apos;re downloading and processing your clips.
+                      This may take a few minutes. You can close this tab and check back later.
                     </p>
                   </div>
                 </motion.div>
@@ -852,11 +962,12 @@ export default function DashboardPage() {
                                 {clip.channel_name}
                               </p>
                             )}
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              {formatDistanceToNow(new Date(clip.created_at), {
-                                addSuffix: true,
-                              })}
-                            </p>
+                            <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                              <span>{formatDistanceToNow(new Date(clip.created_at), { addSuffix: true })}</span>
+                              {clip.video_duration_seconds && (
+                                <span className="text-muted-foreground/50">• {formatDuration(clip.video_duration_seconds)}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -872,24 +983,7 @@ export default function DashboardPage() {
                               MP4
                             </span>
                           )}
-                          <span
-                            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-                              clip.status === "Completed"
-                                ? "bg-green-500/10 text-green-400"
-                                : clip.status === "Failed"
-                                  ? "bg-red-500/10 text-red-400"
-                                  : "bg-blue-500/10 text-blue-400"
-                            }`}
-                          >
-                            {clip.status === "Completed" ? (
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                            ) : clip.status === "Failed" ? (
-                              <AlertCircle className="h-3.5 w-3.5" />
-                            ) : (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            )}
-                            {clip.status}
-                          </span>
+                          <StatusBadge status={clip.status} />
                           {expandedClip === clip.id ? (
                             <ChevronUp className="h-4 w-4 text-muted-foreground" />
                           ) : (
@@ -909,11 +1003,58 @@ export default function DashboardPage() {
                           >
                             <div className="border-t border-white/[0.06] p-4">
                               {clip.status === "Processing" && (
-                                <div className="flex items-center gap-3 py-4">
-                                  <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
-                                  <span className="text-sm text-muted-foreground">
-                                    Processing video... This may take a few minutes.
-                                  </span>
+                                <div className="space-y-3">
+                                  <ProcessingProgress
+                                    status={clip.status}
+                                    currentStep={clip.processing_stage}
+                                  />
+                                  <div className="flex justify-end">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCancel(clip.id);
+                                      }}
+                                      disabled={cancellingId === clip.id}
+                                      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-50"
+                                    >
+                                      {cancellingId === clip.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Square className="h-3 w-3" />
+                                      )}
+                                      Cancel Processing
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {clip.status === "Cancelled" && (
+                                <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-sm font-medium text-yellow-300">
+                                        Processing cancelled successfully.
+                                      </p>
+                                      <p className="mt-1 text-xs text-muted-foreground">
+                                        You can submit another video.
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRetry(clip.id);
+                                      }}
+                                      disabled={retryingId === clip.id}
+                                      className="inline-flex items-center gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-1.5 text-xs font-medium text-yellow-300 transition-colors hover:bg-yellow-500/20 disabled:opacity-50"
+                                    >
+                                      {retryingId === clip.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <RefreshCw className="h-3 w-3" />
+                                      )}
+                                      Retry
+                                    </button>
+                                  </div>
                                 </div>
                               )}
 
@@ -953,12 +1094,19 @@ export default function DashboardPage() {
                                     <h4 className="text-sm font-semibold text-foreground">
                                       Generated Clips ({clip.generated_clips.length})
                                     </h4>
-                                    <button
-                                      onClick={() => setSelectedClipDetail(clip)}
-                                      className="text-xs text-blue-400 hover:text-blue-300"
-                                    >
-                                      View All Details
-                                    </button>
+                                    <div className="flex items-center gap-3">
+                                      {clip.completed_at && (
+                                        <span className="text-xs text-muted-foreground">
+                                          Completed {formatDistanceToNow(new Date(clip.completed_at), { addSuffix: true })}
+                                        </span>
+                                      )}
+                                      <button
+                                        onClick={() => setSelectedClipDetail(clip)}
+                                        className="text-xs text-blue-400 hover:text-blue-300"
+                                      >
+                                        View All Details
+                                      </button>
+                                    </div>
                                   </div>
 
                                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

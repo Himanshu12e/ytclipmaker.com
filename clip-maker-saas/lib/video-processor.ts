@@ -26,14 +26,14 @@ const FFMPEG_PATH = resolveToolPath(
   "ffmpeg"
 );
 
-function getExecOptions() {
+function getExecOptions(timeoutMs?: number) {
   const extraPaths = [
     "C:\\Users\\himya\\AppData\\Roaming\\Python\\Python314\\Scripts",
     "C:\\tools\\ffmpeg\\ffmpeg-master-latest-win64-gpl\\bin",
   ].join(";");
 
   return {
-    timeout: 300000,
+    timeout: timeoutMs || 300000,
     maxBuffer: 50 * 1024 * 1024,
     env: {
       ...process.env,
@@ -48,9 +48,52 @@ export interface ClipFile {
   fileName: string;
 }
 
+export interface VerticalFormatOptions {
+  platform: "youtube_shorts" | "instagram_reels" | "tiktok" | "universal_vertical";
+  clipLength: "15" | "30" | "60" | "auto";
+}
+
+const PLATFORM_SPECS: Record<string, { width: number; height: number }> = {
+  youtube_shorts: { width: 1080, height: 1920 },
+  instagram_reels: { width: 1080, height: 1920 },
+  tiktok: { width: 1080, height: 1920 },
+  universal_vertical: { width: 1080, height: 1920 },
+};
+
+let activeProcesses: Map<string, { childProcess?: ReturnType<typeof execCb> }> = new Map();
+
+export function cancelActiveProcesses(requestId: string) {
+  const proc = activeProcesses.get(requestId);
+  if (proc?.childProcess) {
+    try {
+      (proc.childProcess as any).kill?.();
+    } catch {}
+  }
+  activeProcesses.delete(requestId);
+}
+
 async function ensureTempDir() {
   if (!existsSync(TEMP_DIR)) {
     await mkdir(TEMP_DIR, { recursive: true });
+  }
+}
+
+export async function getVideoDuration(videoUrl: string): Promise<number | null> {
+  try {
+    const ytdlpArgs = [
+      "--no-playlist",
+      "--no-check-certificates",
+      "--print", "duration",
+      "--no-overwrites",
+      videoUrl,
+    ];
+
+    const cmd = `"${YTDLP_PATH}" ${ytdlpArgs.map(a => `"${a}"`).join(" ")}`;
+    const { stdout } = await execAsync(cmd, getExecOptions(30000));
+    const duration = parseFloat(stdout.trim());
+    return isNaN(duration) ? null : duration;
+  } catch {
+    return null;
   }
 }
 
@@ -66,12 +109,12 @@ export async function downloadYouTubeVideo(
 
   const outputPath = join(TEMP_DIR, `${requestId}_source.mp4`);
 
-  console.log(`[VideoProcessor] Downloading video: ${videoId}`);
+  console.log(`[VideoProcessor] Downloading video: ${videoId} at 1080p`);
 
   const ytdlpArgs = [
     "--no-playlist",
     "--merge-output-format", "mp4",
-    "-f", "best[height<=720]/best",
+    "-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
     "--no-overwrites",
     "--no-check-certificates",
     "--print", "after_move:filepath",
@@ -82,7 +125,7 @@ export async function downloadYouTubeVideo(
   try {
     const cmd = `"${YTDLP_PATH}" ${ytdlpArgs.map(a => `"${a}"`).join(" ")}`;
     console.log(`[VideoProcessor] Running: ${cmd}`);
-    const { stdout, stderr } = await execAsync(cmd, getExecOptions());
+    const { stdout, stderr } = await execAsync(cmd, getExecOptions(600000));
 
     if (stderr && stderr.trim()) {
       console.log(`[VideoProcessor] yt-dlp stderr:\n${stderr.trim()}`);
@@ -126,7 +169,8 @@ export async function cutVideoClip(
   startTime: number,
   endTime: number,
   clipId: string,
-  requestId: string
+  requestId: string,
+  verticalFormat?: VerticalFormatOptions
 ): Promise<string> {
   await ensureTempDir();
   const outputPath = join(TEMP_DIR, `${requestId}_${clipId}.mp4`);
@@ -134,25 +178,52 @@ export async function cutVideoClip(
 
   console.log(`[VideoProcessor] Cutting clip ${clipId}: ${startTime}s - ${endTime}s (${duration}s)`);
 
-  const ffmpegArgs = [
-    "-y",
-    "-ss", String(startTime),
-    "-i", `"${sourcePath}"`,
-    "-t", String(duration),
-    "-c:v", "libx264",
-    "-preset", "fast",
-    "-crf", "23",
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-movflags", "+faststart",
-    "-avoid_negative_ts", "make_zero",
-    `"${outputPath}"`,
-  ];
+  let ffmpegArgs: string[];
+
+  if (verticalFormat) {
+    const spec = PLATFORM_SPECS[verticalFormat.platform] || PLATFORM_SPECS.universal_vertical;
+    const targetW = spec.width;
+    const targetH = spec.height;
+    const targetAR = targetW / targetH;
+
+    const cropFilter = `crop=iw*min(1\\,ih*${targetAR}/iw):ih*min(1\\,iw/(ih*${targetAR})):0:0,scale=${targetW}:${targetH}:flags=lanczos,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:color=black`;
+
+    ffmpegArgs = [
+      "-y",
+      "-ss", String(startTime),
+      "-i", `"${sourcePath}"`,
+      "-t", String(duration),
+      "-vf", `"${cropFilter}"`,
+      "-c:v", "libx264",
+      "-preset", "medium",
+      "-crf", "18",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-movflags", "+faststart",
+      "-avoid_negative_ts", "make_zero",
+      `"${outputPath}"`,
+    ];
+  } else {
+    ffmpegArgs = [
+      "-y",
+      "-ss", String(startTime),
+      "-i", `"${sourcePath}"`,
+      "-t", String(duration),
+      "-c:v", "libx264",
+      "-preset", "medium",
+      "-crf", "18",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-movflags", "+faststart",
+      "-avoid_negative_ts", "make_zero",
+      `"${outputPath}"`,
+    ];
+  }
 
   try {
     const cmd = `"${FFMPEG_PATH}" ${ffmpegArgs.join(" ")}`;
     console.log(`[VideoProcessor] Running: ${cmd}`);
-    const { stdout, stderr } = await execAsync(cmd, getExecOptions());
+    const { stdout, stderr } = await execAsync(cmd, getExecOptions(600000));
 
     if (stderr && stderr.trim()) {
       console.log(`[VideoProcessor] ffmpeg stderr:\n${stderr.trim()}`);
@@ -181,7 +252,9 @@ export async function generateClipFiles(
   videoUrl: string,
   requestId: string,
   clips: Array<{ id: string; start_time: number; end_time: number }>,
-  onProgress?: (clipIndex: number, status: "downloading" | "cutting" | "uploading" | "done" | "error", error?: string) => void
+  onProgress?: (clipIndex: number, status: "downloading" | "cutting" | "uploading" | "done" | "error", error?: string) => void,
+  verticalFormat?: VerticalFormatOptions,
+  cancelled?: () => boolean
 ): Promise<ClipFile[]> {
   const results: ClipFile[] = [];
 
@@ -191,6 +264,11 @@ export async function generateClipFiles(
     onProgress?.(0, "done");
 
     for (let i = 0; i < clips.length; i++) {
+      if (cancelled?.()) {
+        console.log(`[VideoProcessor] Processing cancelled for ${requestId}`);
+        break;
+      }
+
       const clip = clips[i];
       try {
         onProgress?.(i, "cutting");
@@ -199,7 +277,8 @@ export async function generateClipFiles(
           clip.start_time,
           clip.end_time,
           clip.id,
-          requestId
+          requestId,
+          verticalFormat
         );
 
         const fileName = `${requestId}_${clip.id}.mp4`;

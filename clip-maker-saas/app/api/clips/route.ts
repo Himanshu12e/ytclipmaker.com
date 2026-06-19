@@ -3,8 +3,10 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { extractTranscript, buildTranscriptText } from "@/lib/transcript";
 import { analyzeTranscriptForClips } from "@/lib/ai-clips";
-import { generateClipFiles, cleanupTempFiles } from "@/lib/video-processor";
+import { generateClipFiles, cleanupTempFiles, type VerticalFormatOptions } from "@/lib/video-processor";
 import { uploadMultipleClips } from "@/lib/storage";
+
+const PROCESSING_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -17,7 +19,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { video_url, video_title, thumbnail_url, channel_name } =
+  const { video_url, video_title, thumbnail_url, channel_name, video_duration_seconds, platform, clip_length } =
     await request.json();
 
   if (!video_url) {
@@ -91,6 +93,11 @@ export async function POST(request: NextRequest) {
       thumbnail_url: thumbnail_url ?? null,
       channel_name: channel_name ?? null,
       status: "Processing",
+      processing_stage: "metadata",
+      video_duration_seconds: video_duration_seconds ?? null,
+      platform: platform ?? "youtube_shorts",
+      clip_length: clip_length ?? "auto",
+      processing_started_at: new Date().toISOString(),
     })
     .select()
     .single();
@@ -115,7 +122,13 @@ export async function POST(request: NextRequest) {
 
   console.log(`[Clip Generation] Starting for ${clipRequest.id} - URL: ${video_url}`);
 
-  generateClipsAsync(clipRequest.id, video_url, video_title ?? "Unknown Video", user.id);
+  generateClipsAsync(
+    clipRequest.id,
+    video_url,
+    video_title ?? "Unknown Video",
+    user.id,
+    { platform: platform ?? "youtube_shorts", clipLength: clip_length ?? "auto" }
+  );
 
   return NextResponse.json({
     clip_request: clipRequest,
@@ -127,14 +140,63 @@ async function generateClipsAsync(
   clipRequestId: string,
   videoUrl: string,
   videoTitle: string,
-  userId: string
+  userId: string,
+  formatOptions: VerticalFormatOptions
 ) {
   const supabase = createServiceClient();
+  let cancelled = false;
+
+  const checkCancelled = async (): Promise<boolean> => {
+    if (cancelled) return true;
+    const { data } = await supabase
+      .from("clip_requests")
+      .select("status")
+      .eq("id", clipRequestId)
+      .single();
+    if (data?.status === "Cancelled") {
+      cancelled = true;
+      return true;
+    }
+    return false;
+  };
+
+  const startedAt = Date.now();
+
+  const timeoutCheck = setInterval(async () => {
+    if (Date.now() - startedAt > PROCESSING_TIMEOUT_MS && !cancelled) {
+      cancelled = true;
+      console.error(`[Clip Generation] Timeout for ${clipRequestId} after 30 minutes`);
+      clearInterval(timeoutCheck);
+      await supabase
+        .from("clip_requests")
+        .update({
+          status: "Failed",
+          error_message: "Processing timed out. Please try again or use a shorter video.",
+        })
+        .eq("id", clipRequestId);
+      await cleanupTempFiles(clipRequestId);
+    }
+  }, 30000);
 
   try {
+    if (await checkCancelled()) {
+      clearInterval(timeoutCheck);
+      return;
+    }
+
     console.log(`[Clip Generation] Extracting transcript for ${clipRequestId}...`);
+    await supabase
+      .from("clip_requests")
+      .update({ processing_stage: "transcript" })
+      .eq("id", clipRequestId);
+
     const segments = await extractTranscript(videoUrl);
     console.log(`[Clip Generation] Got ${segments.length} transcript segments`);
+
+    if (await checkCancelled()) {
+      clearInterval(timeoutCheck);
+      return;
+    }
 
     const transcriptText = buildTranscriptText(segments);
 
@@ -147,7 +209,17 @@ async function generateClipsAsync(
       console.error(`[Clip Generation] Failed to save transcript for ${clipRequestId}:`, transcriptErr.message);
     }
 
+    if (await checkCancelled()) {
+      clearInterval(timeoutCheck);
+      return;
+    }
+
     console.log(`[Clip Generation] Analyzing transcript with Gemini for ${clipRequestId}...`);
+    await supabase
+      .from("clip_requests")
+      .update({ processing_stage: "ai" })
+      .eq("id", clipRequestId);
+
     const clips = await analyzeTranscriptForClips(segments, videoTitle);
     console.log(`[Clip Generation] Generated ${clips.length} clips for ${clipRequestId}`);
 
@@ -160,7 +232,21 @@ async function generateClipsAsync(
       console.error(`[Clip Generation] Failed to save generated clips for ${clipRequestId}:`, clipsErr.message);
     }
 
+    if (await checkCancelled()) {
+      clearInterval(timeoutCheck);
+      return;
+    }
+
     console.log(`[Clip Generation] Downloading video and cutting clips for ${clipRequestId}...`);
+    await supabase
+      .from("clip_requests")
+      .update({ processing_stage: "download" })
+      .eq("id", clipRequestId);
+
+    await supabase
+      .from("clip_requests")
+      .update({ processing_stage: "cut" })
+      .eq("id", clipRequestId);
 
     const clipFiles = await generateClipFiles(
       videoUrl,
@@ -169,10 +255,22 @@ async function generateClipsAsync(
         id: c.id,
         start_time: c.start_time,
         end_time: c.end_time,
-      }))
+      })),
+      undefined,
+      formatOptions,
+      () => cancelled
     );
 
+    if (await checkCancelled()) {
+      clearInterval(timeoutCheck);
+      return;
+    }
+
     console.log(`[Clip Generation] Generated ${clipFiles.length} clip files, uploading to storage...`);
+    await supabase
+      .from("clip_requests")
+      .update({ processing_stage: "upload" })
+      .eq("id", clipRequestId);
 
     const uploadResults = await uploadMultipleClips(userId, clipRequestId, clipFiles);
 
@@ -192,6 +290,7 @@ async function generateClipsAsync(
         status: "Completed",
         clips_generated: uploadResults.length,
         completed_at: new Date().toISOString(),
+        processing_stage: "completed",
       })
       .eq("id", clipRequestId)
       .select()
@@ -207,8 +306,7 @@ async function generateClipsAsync(
 
     await cleanupTempFiles(clipRequestId);
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error occurred";
+    const errorMessage = getUserFriendlyError(error);
 
     console.error(`[Clip Generation] Failed for ${clipRequestId}:`, errorMessage);
 
@@ -218,6 +316,7 @@ async function generateClipsAsync(
       .update({
         status: "Failed",
         error_message: errorMessage,
+        processing_stage: null,
       })
       .eq("id", clipRequestId);
 
@@ -228,7 +327,43 @@ async function generateClipsAsync(
     }
 
     await cleanupTempFiles(clipRequestId);
+  } finally {
+    clearInterval(timeoutCheck);
   }
+}
+
+function getUserFriendlyError(error: unknown): string {
+  const msg = error instanceof Error ? error.message : "Unknown error occurred";
+
+  if (msg.includes("rate") || msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) {
+    return "AI service is currently busy. Please try again in a few minutes.";
+  }
+  if (msg.includes("503") || msg.includes("UNAVAILABLE")) {
+    return "AI service is temporarily unavailable. Please try again in a few minutes.";
+  }
+  if (msg.includes("timeout") || msg.includes("TIMED_OUT")) {
+    return "Processing timed out. Please try again or use a shorter video.";
+  }
+  if (msg.includes("Video unavailable")) {
+    return "This video is unavailable or has been removed from YouTube.";
+  }
+  if (msg.includes("Private video")) {
+    return "This video is private and cannot be downloaded.";
+  }
+  if (msg.includes("Sign in")) {
+    return "This video requires authentication to access.";
+  }
+  if (msg.includes("age")) {
+    return "This video has an age restriction and cannot be downloaded.";
+  }
+  if (msg.includes("upload") || msg.includes("storage")) {
+    return "Clip upload failed. Please retry.";
+  }
+  if (msg.includes("transcript") || msg.includes("Transcript")) {
+    return "Could not fetch transcript. This video may not have captions available.";
+  }
+
+  return msg.substring(0, 200);
 }
 
 export async function GET() {
@@ -251,6 +386,19 @@ export async function GET() {
   if (error) {
     return NextResponse.json({ error: "Failed to fetch clips" }, { status: 500 });
   }
+
+  // Auto-fix stuck processing requests (older than 35 minutes)
+  const stuckThreshold = new Date(Date.now() - 35 * 60 * 1000).toISOString();
+  await supabase
+    .from("clip_requests")
+    .update({
+      status: "Failed",
+      error_message: "Processing timed out. Please try again or use a shorter video.",
+      processing_stage: null,
+    })
+    .eq("user_id", user.id)
+    .eq("status", "Processing")
+    .lt("processing_started_at", stuckThreshold);
 
   let { data: profile } = await supabase
     .from("profiles")

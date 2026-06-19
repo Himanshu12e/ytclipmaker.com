@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractVideoId, getThumbnailUrl } from "@/lib/youtube";
+import { getVideoDuration } from "@/lib/video-processor";
 
 export async function POST(request: NextRequest) {
   const { url } = await request.json();
@@ -26,12 +27,20 @@ export async function POST(request: NextRequest) {
 
     const oembedData = await oembedRes.json();
 
+    let duration: number | null = null;
+    try {
+      duration = await getVideoDuration(`https://www.youtube.com/watch?v=${videoId}`);
+    } catch {
+      // Duration fetch failed, not critical
+    }
+
     return NextResponse.json({
       video_id: videoId,
       title: oembedData.title ?? "Unknown Title",
       thumbnail_url: getThumbnailUrl(videoId),
       channel_name: oembedData.author_name ?? "Unknown Channel",
       youtube_url: url,
+      duration_seconds: duration,
     });
   } catch {
     return NextResponse.json(
