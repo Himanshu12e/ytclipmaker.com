@@ -9,18 +9,67 @@ import { uploadMultipleClips } from "@/lib/storage";
 const PROCESSING_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
+  let supabase;
+  try {
+    supabase = await createClient();
+  } catch (clientErr) {
+    const msg = clientErr instanceof Error ? clientErr.message : String(clientErr);
+    const stack = clientErr instanceof Error ? clientErr.stack : undefined;
+    console.error("[POST /api/clips] CRITICAL: Failed to create Supabase client:");
+    console.error("  Error:", msg);
+    console.error("  Stack:", stack);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user;
+  try {
+    const { data: authData, error: authErr } = await supabase.auth.getUser();
+    if (authErr) {
+      console.error("[POST /api/clips] CRITICAL: Auth getUser error:");
+      console.error("  Error code:", authErr.code);
+      console.error("  Error message:", authErr.message);
+      console.error("  Error status:", authErr.status);
+      return NextResponse.json({ error: "Authentication failed", details: authErr.message }, { status: 401 });
+    }
+    user = authData.user;
+  } catch (authException) {
+    const msg = authException instanceof Error ? authException.message : String(authException);
+    const stack = authException instanceof Error ? authException.stack : undefined;
+    console.error("[POST /api/clips] CRITICAL: Exception during getUser:");
+    console.error("  Error:", msg);
+    console.error("  Stack:", stack);
+    return NextResponse.json({ error: "Authentication failed" }, { status: 401 });
+  }
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch (parseErr) {
+    const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+    const stack = parseErr instanceof Error ? parseErr.stack : undefined;
+    console.error("[POST /api/clips] CRITICAL: Failed to parse request body:");
+    console.error("  Error:", msg);
+    console.error("  Stack:", stack);
+    console.error("  Content-Type:", request.headers.get("content-type"));
+    return NextResponse.json({ error: "Invalid request body", details: msg }, { status: 400 });
+  }
+
+  console.log("[POST /api/clips] Request payload:", JSON.stringify(body, null, 2));
+
   const { video_url, video_title, thumbnail_url, channel_name, video_duration_seconds, platform, clip_length } =
-    await request.json();
+    body as {
+      video_url?: string;
+      video_title?: string;
+      thumbnail_url?: string;
+      channel_name?: string;
+      video_duration_seconds?: number;
+      platform?: string;
+      clip_length?: string;
+    };
 
   if (!video_url) {
     return NextResponse.json({ error: "Video URL is required" }, { status: 400 });
@@ -50,6 +99,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (insertErr) {
+      console.error("[POST /api/clips] CRITICAL: Failed to create profile:");
+      console.error("  Supabase error code:", insertErr.code);
+      console.error("  Supabase error message:", insertErr.message);
+      console.error("  Supabase error details:", insertErr.details);
+      console.error("  Supabase error hint:", insertErr.hint);
+      console.error("  User ID:", user.id);
+      console.error("  User email:", user.email);
       return NextResponse.json(
         { error: "Failed to create profile", details: insertErr.message },
         { status: 500 }
@@ -63,6 +119,10 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (refetchErr || !newProfile) {
+      console.error("[POST /api/clips] CRITICAL: Failed to load new profile after insert:");
+      console.error("  refetchErr:", refetchErr ? { code: refetchErr.code, message: refetchErr.message, details: refetchErr.details, hint: refetchErr.hint } : null);
+      console.error("  newProfile:", newProfile);
+      console.error("  User ID:", user.id);
       return NextResponse.json(
         { error: "Failed to load new profile", details: refetchErr?.message },
         { status: 500 }
@@ -103,8 +163,24 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (insertError) {
+    console.error("[POST /api/clips] CRITICAL: Failed to insert clip_requests row:");
+    console.error("  Supabase error code:", insertError.code);
+    console.error("  Supabase error message:", insertError.message);
+    console.error("  Supabase error details:", insertError.details);
+    console.error("  Supabase error hint:", insertError.hint);
+    console.error("  Payload:", JSON.stringify({
+      user_id: user.id,
+      video_url,
+      video_title: video_title ?? null,
+      thumbnail_url: thumbnail_url ?? null,
+      channel_name: channel_name ?? null,
+      status: "Processing",
+      video_duration_seconds: video_duration_seconds ?? null,
+      platform: platform ?? "youtube_shorts",
+      clip_length: clip_length ?? "auto",
+    }, null, 2));
     return NextResponse.json(
-      { error: "Failed to create clip request" },
+      { error: "Failed to create clip request", details: insertError.message },
       { status: 500 }
     );
   }
@@ -384,7 +460,13 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json({ error: "Failed to fetch clips" }, { status: 500 });
+    console.error("[GET /api/clips] CRITICAL: Failed to fetch clips:");
+    console.error("  Supabase error code:", error.code);
+    console.error("  Supabase error message:", error.message);
+    console.error("  Supabase error details:", error.details);
+    console.error("  Supabase error hint:", error.hint);
+    console.error("  User ID:", user.id);
+    return NextResponse.json({ error: "Failed to fetch clips", details: error.message }, { status: 500 });
   }
 
   // Auto-fix stuck processing requests (older than 35 minutes)
