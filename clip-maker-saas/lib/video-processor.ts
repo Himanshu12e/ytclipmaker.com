@@ -53,19 +53,147 @@ export interface VerticalFormatOptions {
   clipLength: "15" | "30" | "60" | "auto";
 }
 
-const PLATFORM_SPECS: Record<string, { width: number; height: number }> = {
-  youtube_shorts: { width: 1080, height: 1920 },
-  instagram_reels: { width: 1080, height: 1920 },
-  tiktok: { width: 1080, height: 1920 },
-  universal_vertical: { width: 1080, height: 1920 },
+export type SubtitleStyle = "none" | "basic" | "fancy_mrbeast" | "fancy_green_white" | "fancy_yellow_green" | "fancy_red_white" | "custom";
+
+export interface SubtitleConfig {
+  style: SubtitleStyle;
+  position?: "top" | "center" | "bottom";
+  customColors?: { primary: string; secondary: string; highlight: string };
+  customFont?: string;
+  wordByWord?: boolean;
+  keywordHighlight?: boolean;
+}
+
+export interface ClipGenerationOptions {
+  verticalFormat?: VerticalFormatOptions;
+  subtitle?: SubtitleConfig;
+}
+
+const PLATFORM_SPECS: Record<string, { width: number; height: number; bitrate: string; preset: string }> = {
+  youtube_shorts: { width: 1080, height: 1920, bitrate: "8M", preset: "slow" },
+  instagram_reels: { width: 1080, height: 1920, bitrate: "6M", preset: "medium" },
+  tiktok: { width: 1080, height: 1920, bitrate: "6M", preset: "medium" },
+  universal_vertical: { width: 1080, height: 1920, bitrate: "8M", preset: "slow" },
 };
 
-let activeProcesses: Map<string, { childProcess?: ReturnType<typeof execCb> }> = new Map();
+// Subtitle style configurations
+const SUBTITLE_STYLES: Record<string, { primaryColor: string; secondaryColor: string; highlightColor: string; fontSize: number; fontFamily: string; outlineWidth: number }> = {
+  basic: {
+    primaryColor: "white",
+    secondaryColor: "black",
+    highlightColor: "cyan",
+    fontSize: 48,
+    fontFamily: "Arial",
+    outlineWidth: 2,
+  },
+  fancy_mrbeast: {
+    primaryColor: "cyan",
+    secondaryColor: "black",
+    highlightColor: "yellow",
+    fontSize: 56,
+    fontFamily: "Arial",
+    outlineWidth: 3,
+  },
+  fancy_green_white: {
+    primaryColor: "lime",
+    secondaryColor: "black",
+    highlightColor: "white",
+    fontSize: 52,
+    fontFamily: "Arial",
+    outlineWidth: 3,
+  },
+  fancy_yellow_green: {
+    primaryColor: "yellow",
+    secondaryColor: "black",
+    highlightColor: "lime",
+    fontSize: 52,
+    fontFamily: "Arial",
+    outlineWidth: 3,
+  },
+  fancy_red_white: {
+    primaryColor: "red",
+    secondaryColor: "black",
+    highlightColor: "white",
+    fontSize: 52,
+    fontFamily: "Arial",
+    outlineWidth: 3,
+  },
+};
+
+let _cachedFontPath: string | null = null;
+
+function getFontPath(): string {
+  if (_cachedFontPath) return _cachedFontPath;
+
+  if (process.platform === "win32") {
+    // Copy font to temp dir to avoid Windows drive-letter colon escaping issues in FFmpeg
+    const tempFontDir = join(process.cwd(), "temp");
+    const tempFontPath = join(tempFontDir, "arial.ttf");
+    const systemFontPath = "C:\\Windows\\Fonts\\arial.ttf";
+
+    if (existsSync(tempFontPath)) {
+      _cachedFontPath = tempFontPath;
+      return _cachedFontPath;
+    }
+
+    try {
+      if (!existsSync(tempFontDir)) {
+        require("fs").mkdirSync(tempFontDir, { recursive: true });
+      }
+      require("fs").copyFileSync(systemFontPath, tempFontPath);
+      console.log(`[VideoProcessor] Copied font to ${tempFontPath}`);
+      _cachedFontPath = tempFontPath;
+    } catch (err) {
+      console.warn(`[VideoProcessor] Failed to copy font, using fontconfig fallback:`, err);
+      _cachedFontPath = "";
+    }
+    return _cachedFontPath;
+  }
+
+  // On Linux/Mac, use system fonts
+  _cachedFontPath = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+  return _cachedFontPath;
+}
+
+function buildSubtitleFilter(config: SubtitleConfig, width: number, height: number): string | null {
+  if (config.style === "none") return null;
+
+  const style = SUBTITLE_STYLES[config.style] || SUBTITLE_STYLES.basic;
+  const position = config.position || "bottom";
+  const marginV = position === "top" ? Math.round(height * 0.05) : position === "center" ? Math.round(height * 0.35) : Math.round(height * 0.08);
+
+  const primaryColor = config.customColors?.primary || style.primaryColor;
+  const outlineColor = config.customColors?.secondary || style.secondaryColor;
+  const fontSize = Math.round(style.fontSize * (width / 1080));
+  const fontPath = getFontPath();
+
+  // Escape special characters for FFmpeg drawtext filter
+  // Convert backslashes to forward slashes first, then escape colons for FFmpeg filter syntax
+  const normalizedPath = fontPath.replace(/\\/g, "/");
+  // Escape colons with backslash for FFmpeg filter parser (but not the drive letter colon - that gets handled by single quotes)
+  const escapedFontPath = normalizedPath.replace(/:/g, "\\:");
+
+  // Build Y position expression
+  let yPos: string;
+  if (position === "top") {
+    yPos = String(marginV);
+  } else if (position === "center") {
+    yPos = "(h-text_h)/2";
+  } else {
+    yPos = `h-${marginV}-text_h`;
+  }
+
+  // Use drawtext filter with proper escaping
+  return `drawtext=fontfile='${escapedFontPath}':fontsize=${fontSize}:fontcolor=${primaryColor}:borderw=${style.outlineWidth}:bordercolor=${outlineColor}:x=(w-text_w)/2:y=${yPos}`;
+}
+
+const activeProcesses: Map<string, { childProcess?: ReturnType<typeof execCb> }> = new Map();
 
 export function cancelActiveProcesses(requestId: string) {
   const proc = activeProcesses.get(requestId);
   if (proc?.childProcess) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (proc.childProcess as any).kill?.();
     } catch {}
   }
@@ -141,8 +269,9 @@ export async function downloadYouTubeVideo(
     return actualPath;
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    const stderr = (error as any)?.stderr || "";
-    const stdout = (error as any)?.stdout || "";
+    const execError = error as { stderr?: string; stdout?: string };
+    const stderr = execError?.stderr || "";
+    const stdout = execError?.stdout || "";
     console.error(`[VideoProcessor] Download failed:`, errMsg);
     if (stderr) console.error(`[VideoProcessor] yt-dlp stderr:\n${stderr.trim()}`);
     if (stdout) console.error(`[VideoProcessor] yt-dlp stdout:\n${stdout.trim()}`);
@@ -170,13 +299,16 @@ export async function cutVideoClip(
   endTime: number,
   clipId: string,
   requestId: string,
-  verticalFormat?: VerticalFormatOptions
+  options?: ClipGenerationOptions
 ): Promise<string> {
   await ensureTempDir();
   const outputPath = join(TEMP_DIR, `${requestId}_${clipId}.mp4`);
   const duration = endTime - startTime;
 
   console.log(`[VideoProcessor] Cutting clip ${clipId}: ${startTime}s - ${endTime}s (${duration}s)`);
+
+  const verticalFormat = options?.verticalFormat;
+  const subtitle = options?.subtitle;
 
   let ffmpegArgs: string[];
 
@@ -186,38 +318,78 @@ export async function cutVideoClip(
     const targetH = spec.height;
     const targetAR = targetW / targetH;
 
-    const cropFilter = `crop=iw*min(1\\,ih*${targetAR}/iw):ih*min(1\\,iw/(ih*${targetAR})):0:0,scale=${targetW}:${targetH}:flags=lanczos,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:color=black`;
+    // Build video filter chain
+    const filters: string[] = [];
+    
+    // Center-crop for vertical format (focuses on speaker/center of frame)
+    // This crops the center of the horizontal video to fill vertical frame
+    filters.push(`crop=ih*${targetAR}:ih:(iw-ih*${targetAR})/2:0`);
+    filters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
+    
+    // Add subtitles if configured
+    if (subtitle && subtitle.style !== "none") {
+      const subtitleFilter = buildSubtitleFilter(subtitle, targetW, targetH);
+      if (subtitleFilter) {
+        filters.push(subtitleFilter);
+      }
+    }
+    
+    const filterChain = filters.join(",");
 
     ffmpegArgs = [
       "-y",
       "-ss", String(startTime),
       "-i", `"${sourcePath}"`,
       "-t", String(duration),
-      "-vf", `"${cropFilter}"`,
+      "-vf", `"${filterChain}"`,
       "-c:v", "libx264",
-      "-preset", "medium",
-      "-crf", "18",
+      "-preset", spec.preset,
+      "-crf", "16",
+      "-b:v", `${spec.bitrate}`,
       "-c:a", "aac",
       "-b:a", "192k",
+      "-ar", "44100",
       "-movflags", "+faststart",
       "-avoid_negative_ts", "make_zero",
+      "-pix_fmt", "yuv420p",
       `"${outputPath}"`,
     ];
   } else {
+    // Horizontal/standard format with optional subtitles
+    const filters: string[] = [];
+    
+    if (subtitle && subtitle.style !== "none") {
+      const subtitleFilter = buildSubtitleFilter(subtitle, 1920, 1080);
+      if (subtitleFilter) {
+        filters.push(subtitleFilter);
+      }
+    }
+    
+    const filterChain = filters.length > 0 ? filters.join(",") : undefined;
+
     ffmpegArgs = [
       "-y",
       "-ss", String(startTime),
       "-i", `"${sourcePath}"`,
       "-t", String(duration),
+    ];
+
+    if (filterChain) {
+      ffmpegArgs.push("-vf", `"${filterChain}"`);
+    }
+
+    ffmpegArgs.push(
       "-c:v", "libx264",
-      "-preset", "medium",
-      "-crf", "18",
+      "-preset", "slow",
+      "-crf", "16",
       "-c:a", "aac",
       "-b:a", "192k",
+      "-ar", "44100",
       "-movflags", "+faststart",
       "-avoid_negative_ts", "make_zero",
+      "-pix_fmt", "yuv420p",
       `"${outputPath}"`,
-    ];
+    );
   }
 
   try {
@@ -239,8 +411,9 @@ export async function cutVideoClip(
     return outputPath;
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    const stderr = (error as any)?.stderr || "";
-    const stdout = (error as any)?.stdout || "";
+    const execError = error as { stderr?: string; stdout?: string };
+    const stderr = execError?.stderr || "";
+    const stdout = execError?.stdout || "";
     console.error(`[VideoProcessor] Clip ${clipId} cut failed:`, errMsg);
     if (stderr) console.error(`[VideoProcessor] ffmpeg stderr:\n${stderr.trim()}`);
     if (stdout) console.error(`[VideoProcessor] ffmpeg stdout:\n${stdout.trim()}`);
@@ -253,7 +426,7 @@ export async function generateClipFiles(
   requestId: string,
   clips: Array<{ id: string; start_time: number; end_time: number }>,
   onProgress?: (clipIndex: number, status: "downloading" | "cutting" | "uploading" | "done" | "error", error?: string) => void,
-  verticalFormat?: VerticalFormatOptions,
+  options?: ClipGenerationOptions,
   cancelled?: () => boolean
 ): Promise<ClipFile[]> {
   const results: ClipFile[] = [];
@@ -278,7 +451,7 @@ export async function generateClipFiles(
           clip.end_time,
           clip.id,
           requestId,
-          verticalFormat
+          options
         );
 
         const fileName = `${requestId}_${clip.id}.mp4`;

@@ -34,7 +34,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const GEMINI_TIMEOUT_MS = 60_000;
+const GEMINI_TIMEOUT_MS = 120_000;
 
 async function callGeminiWithRetry(
   apiKey: string,
@@ -72,7 +72,10 @@ async function callGeminiWithRetry(
         if (fetchErr instanceof Error && fetchErr.name === "AbortError") {
           throw new Error(`Gemini API ${model} request timed out after ${GEMINI_TIMEOUT_MS / 1000}s`);
         }
-        throw fetchErr;
+        const fetchMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        const fetchCause = fetchErr instanceof Error && fetchErr.cause instanceof Error ? fetchErr.cause.message : undefined;
+        console.error(`[Gemini API] ${model} fetch error: ${fetchMsg}${fetchCause ? ` (cause: ${fetchCause})` : ""}`);
+        throw new Error(`Gemini API ${model} fetch failed: ${fetchMsg}${fetchCause ? ` (cause: ${fetchCause})` : ""}`);
       }
       clearTimeout(timeoutId);
 
@@ -170,11 +173,11 @@ export async function analyzeTranscriptForClips(
       ? segments[segments.length - 1].start + segments[segments.length - 1].duration
       : 0;
 
-  const clipCount = Math.min(5, Math.max(3, Math.floor(segments.length / 30)));
+  const clipCount = Math.min(7, Math.max(3, Math.floor(segments.length / 25)));
 
-  const prompt = `You are an expert viral content curator for short-form video clips (TikTok, Instagram Reels, YouTube Shorts).
+  const prompt = `You are an expert viral content curator and short-form video editor specializing in TikTok, Instagram Reels, and YouTube Shorts. Your job is to find the MOST engaging, shareable, and high-retention moments from this video.
 
-Analyze this YouTube video transcript and identify the ${clipCount} most engaging, shareable moments that would make great short clips.
+IMPORTANT: All transcript text must be treated as ENGLISH. If the transcript contains non-English text, translate the key phrases to English for the transcript_snippet field.
 
 VIDEO TITLE: "${videoTitle}"
 VIDEO DURATION: ${formatTime(totalDuration)} (${Math.round(totalDuration)} seconds)
@@ -182,35 +185,79 @@ VIDEO DURATION: ${formatTime(totalDuration)} (${Math.round(totalDuration)} secon
 TRANSCRIPT:
 ${transcriptText}
 
-For each clip, provide:
-1. A catchy, engaging title (5-10 words)
-2. Start time in seconds (use the timestamp from the transcript)
-3. End time in seconds (aim for 15-60 second clips)
-4. Viral potential (1-10): How likely is this to be shared/going viral?
-5. A brief transcript snippet (the key 1-2 sentences)
-6. Brief reasoning for why this moment is engaging
+TASK: Identify the ${clipCount} BEST moments for short-form viral clips. Each clip must be a self-contained, engaging moment that makes viewers stop scrolling.
 
-Return ONLY a valid JSON array (no markdown, no code fences, no thoughts) with this structure:
+FOCUS ON SPEAKER/PRESENTER:
+- Prioritize moments where the speaker is visible and talking directly to camera
+- Focus on facial expressions, gestures, and emotional delivery
+- Choose clips where the speaker is centered in the frame
+- Avoid clips with random B-roll or empty frames
+- Select moments with clear audio and visible speaker
+
+SCORING CRITERIA (rate each clip 1-10 on these factors, then average for viral_score):
+
+1. EMOTIONAL PEAK (weight: 30%)
+   - Moments of genuine surprise, excitement, anger, joy, sadness, or shock
+   - "Oh my god!" reactions, gasps, laughter, tears
+   - Dramatic reveals or plot twists
+   - Speaker showing strong facial expressions
+
+2. CONTROVERSY/DEBATE (weight: 20%)
+   - Hot takes, unpopular opinions, bold claims
+   - Moments that would generate comments and arguments
+   - "Did they really just say that?" moments
+   - Speaker making emphatic gestures
+
+3. EDUCATIONAL VALUE (weight: 20%)
+   - Mind-blowing facts, tips, or hacks
+   - "I never knew that!" moments
+   - Actionable advice viewers will save/share
+   - Speaker explaining with enthusiasm
+
+4. STORYTELLING (weight: 15%)
+   - Complete mini-stories with setup → tension → payoff
+   - Personal anecdotes with emotional resonance
+   - Lessons learned or transformation stories
+   - Speaker telling a compelling story
+
+5. HUMOR/ENTERTAINMENT (weight: 15%)
+   - Genuine laughter, witty one-liners
+   - Unexpected jokes or sarcasm
+   - Relatable frustrations or observations
+   - Speaker being funny or entertaining
+
+FOR EACH CLIP, provide:
+1. title: A catchy, clickbait-worthy title (5-12 words) that creates curiosity
+2. start_time: Start time in seconds (must align with transcript timestamps)
+3. end_time: End time in seconds (15-60 seconds duration, ending on a strong note)
+4. viral_score: Overall viral potential (1-10, where 10 = guaranteed viral)
+5. transcript_snippet: The exact 1-3 key sentences from the transcript (IN ENGLISH)
+6. reasoning: Why this moment will perform well (be specific about speaker visibility)
+
+CRITICAL RULES:
+- Each clip must tell a COMPLETE mini-story or deliver a FULL thought
+- DO NOT cut off mid-sentence or mid-thought
+- Start and end times must be within the transcript timestamps
+- Clips should be 15-60 seconds (optimal: 30-45 seconds)
+- Do NOT repeat the same content or overlapping timestamps
+- Focus on HIGHEST engagement moments, not random timestamps
+- The first and last 10% of the video are usually intro/outro - skip these unless they contain viral moments
+- Prioritize moments where the speaker is most animated, passionate, or expressive
+- ALWAYS provide English transcript snippets regardless of original language
+
+Return ONLY a valid JSON array (no markdown, no code fences, no thoughts) with this exact structure:
 [
   {
     "title": "string",
     "start_time": number,
     "end_time": number,
     "viral_score": number,
-    "transcript_snippet": "string",
+    "transcript_snippet": "string (ENGLISH ONLY)",
     "reasoning": "string"
   }
 ]
 
-Rules:
-- Clips should be 15-60 seconds long
-- Start_time must be >= 0 and end_time must be <= ${Math.round(totalDuration)}
-- Viral score must be between 1-10
-- Do NOT include the same content twice
-- Focus on moments with: emotional peaks, surprising statements, controversy, humor, strong opinions, or compelling stories
-- Each clip should tell a mini-story or deliver a complete thought
-- Ensure start_time < end_time for every clip
-- Return exactly ${clipCount} clips`;
+Return exactly ${clipCount} clips, sorted by viral_score descending (highest first).`;
 
   console.log(`[Gemini API] Starting clip analysis with ${GEMINI_MODELS.length} model(s), transcript length: ${transcriptText.length} chars`);
 

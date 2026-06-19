@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { extractTranscript, buildTranscriptText } from "@/lib/transcript";
 import { analyzeTranscriptForClips } from "@/lib/ai-clips";
-import { generateClipFiles, cleanupTempFiles, type VerticalFormatOptions } from "@/lib/video-processor";
+import { generateClipFiles, cleanupTempFiles } from "@/lib/video-processor";
 import { uploadMultipleClips } from "@/lib/storage";
 import type { GeneratedClip } from "@/lib/ai-clips";
 
@@ -53,9 +53,10 @@ export async function POST(
     })
     .eq("id", id);
 
-  const formatOptions: VerticalFormatOptions = {
+  const formatOptions = {
     platform: clipRequest.platform || "youtube_shorts",
     clipLength: clipRequest.clip_length || "auto",
+    subtitleStyle: clipRequest.subtitle_style || "none",
   };
 
   processRetryGeneration(id, clipRequest.video_url, clipRequest.video_title || "Unknown Video", user.id, formatOptions);
@@ -68,7 +69,7 @@ async function processRetryGeneration(
   videoUrl: string,
   videoTitle: string,
   userId: string,
-  formatOptions: VerticalFormatOptions
+  formatOptions: { platform: string; clipLength: string; subtitleStyle: string }
 ) {
   const supabase = createServiceClient();
   let cancelled = false;
@@ -167,7 +168,16 @@ async function processRetryGeneration(
         clipRequestId,
         clips.map(c => ({ id: c.id, start_time: c.start_time, end_time: c.end_time })),
         undefined,
-        formatOptions,
+        {
+          verticalFormat: {
+            platform: formatOptions.platform as "youtube_shorts" | "instagram_reels" | "tiktok" | "universal_vertical",
+            clipLength: formatOptions.clipLength as "15" | "30" | "60" | "auto",
+          },
+          subtitle: {
+            style: formatOptions.subtitleStyle as "none" | "basic" | "fancy_mrbeast" | "fancy_green_white" | "fancy_yellow_green" | "fancy_red_white" | "custom",
+            position: "bottom",
+          },
+        },
         () => cancelled
       );
 
@@ -181,11 +191,46 @@ async function processRetryGeneration(
         .update({ processing_stage: "upload" })
         .eq("id", clipRequestId);
 
+      // Check if any clips were actually generated
+      if (clipFiles.length === 0) {
+        console.error(`[Retry Generation] No clip files were generated for ${clipRequestId}`);
+        clearInterval(timeoutCheck);
+        await supabase
+          .from("clip_requests")
+          .update({
+            status: "Failed",
+            error_message: "No clips could be generated. The video may not have suitable moments for short clips.",
+            processing_stage: null,
+          })
+          .eq("id", clipRequestId);
+        await cleanupTempFiles(clipRequestId);
+        return;
+      }
+
       const uploadResults = await uploadMultipleClips(userId, clipRequestId, clipFiles);
       const clipFilesMap = uploadResults.reduce((acc, result) => {
-        acc[result.clipId] = result.url;
+        acc[result.clipId] = {
+          url: result.url,
+          fileSize: result.fileSize,
+        };
         return acc;
-      }, {} as Record<string, string>);
+      }, {} as Record<string, { url: string; fileSize: number }>);
+
+      // Check if any uploads succeeded
+      if (uploadResults.length === 0) {
+        console.error(`[Retry Generation] No clips were uploaded successfully for ${clipRequestId}`);
+        clearInterval(timeoutCheck);
+        await supabase
+          .from("clip_requests")
+          .update({
+            status: "Failed",
+            error_message: "Failed to upload generated clips. Please try again.",
+            processing_stage: null,
+          })
+          .eq("id", clipRequestId);
+        await cleanupTempFiles(clipRequestId);
+        return;
+      }
 
       await supabase
         .from("clip_requests")
@@ -223,7 +268,16 @@ async function processRetryGeneration(
         end_time: c.end_time,
       })),
       undefined,
-      formatOptions,
+      {
+        verticalFormat: {
+          platform: formatOptions.platform as "youtube_shorts" | "instagram_reels" | "tiktok" | "universal_vertical",
+          clipLength: formatOptions.clipLength as "15" | "30" | "60" | "auto",
+        },
+        subtitle: {
+          style: formatOptions.subtitleStyle as "none" | "basic" | "fancy_mrbeast" | "fancy_green_white" | "fancy_yellow_green" | "fancy_red_white" | "custom",
+          position: "bottom",
+        },
+      },
       () => cancelled
     );
 
@@ -242,15 +296,50 @@ async function processRetryGeneration(
       .update({ processing_stage: "upload" })
       .eq("id", clipRequestId);
 
+    // Check if any uploads succeeded
+    if (clipFiles.length === 0) {
+      console.error(`[Retry Generation] No clip files were generated for ${clipRequestId}`);
+      clearInterval(timeoutCheck);
+      await supabase
+        .from("clip_requests")
+        .update({
+          status: "Failed",
+          error_message: "No clips could be generated. The video may not have suitable moments for short clips.",
+          processing_stage: null,
+        })
+        .eq("id", clipRequestId);
+      await cleanupTempFiles(clipRequestId);
+      return;
+    }
+
     const uploadResults = await uploadMultipleClips(userId, clipRequestId, clipFiles);
 
     const clipFilesMap = uploadResults.reduce(
       (acc, result) => {
-        acc[result.clipId] = result.url;
+        acc[result.clipId] = {
+          url: result.url,
+          fileSize: result.fileSize,
+        };
         return acc;
       },
-      {} as Record<string, string>
+      {} as Record<string, { url: string; fileSize: number }>
     );
+
+    // Check if any uploads succeeded
+    if (uploadResults.length === 0) {
+      console.error(`[Retry Generation] No clips were uploaded successfully for ${clipRequestId}`);
+      clearInterval(timeoutCheck);
+      await supabase
+        .from("clip_requests")
+        .update({
+          status: "Failed",
+          error_message: "Failed to upload generated clips. Please try again.",
+          processing_stage: null,
+        })
+        .eq("id", clipRequestId);
+      await cleanupTempFiles(clipRequestId);
+      return;
+    }
 
     console.log(`[Retry Generation] Updating status to Completed for ${clipRequestId} (clips: ${uploadResults.length})...`);
     const { data: updatedRow, error: statusErr } = await supabase

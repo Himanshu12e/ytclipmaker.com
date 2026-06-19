@@ -3,10 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { extractTranscript, buildTranscriptText } from "@/lib/transcript";
 import { analyzeTranscriptForClips } from "@/lib/ai-clips";
-import { generateClipFiles, cleanupTempFiles, type VerticalFormatOptions } from "@/lib/video-processor";
+import { generateClipFiles, cleanupTempFiles } from "@/lib/video-processor";
 import { uploadMultipleClips } from "@/lib/storage";
 
 const PROCESSING_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_VIDEO_DURATION_SECONDS = 60 * 60; // 60 minutes
 
 export async function POST(request: NextRequest) {
   let supabase;
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
 
   console.log("[POST /api/clips] Request payload:", JSON.stringify(body, null, 2));
 
-  const { video_url, video_title, thumbnail_url, channel_name, video_duration_seconds, platform, clip_length } =
+  const { video_url, video_title, thumbnail_url, channel_name, video_duration_seconds, platform, clip_length, subtitle_style } =
     body as {
       video_url?: string;
       video_title?: string;
@@ -69,6 +70,7 @@ export async function POST(request: NextRequest) {
       video_duration_seconds?: number;
       platform?: string;
       clip_length?: string;
+      subtitle_style?: string;
     };
 
   if (!video_url) {
@@ -79,6 +81,16 @@ export async function POST(request: NextRequest) {
     /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)[\w-]{11}(&[\w=-]*)?$/;
   if (!youtubeRegex.test(video_url)) {
     return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
+  }
+
+  // Validate video duration limit
+  if (video_duration_seconds && video_duration_seconds > MAX_VIDEO_DURATION_SECONDS) {
+    return NextResponse.json({
+      error: "Video too long",
+      details: `Current version supports videos up to 60 minutes for best performance. Your video is ${Math.round(video_duration_seconds / 60)} minutes.`,
+      max_duration: MAX_VIDEO_DURATION_SECONDS,
+      video_duration: video_duration_seconds,
+    }, { status: 400 });
   }
 
   let profileData: { free_clips_remaining: number; clips_limit: number; plan: string } | null = null;
@@ -203,7 +215,11 @@ export async function POST(request: NextRequest) {
     video_url,
     video_title ?? "Unknown Video",
     user.id,
-    { platform: platform ?? "youtube_shorts", clipLength: clip_length ?? "auto" }
+    { 
+      platform: platform ?? "youtube_shorts", 
+      clipLength: clip_length ?? "auto",
+      subtitleStyle: subtitle_style ?? "none",
+    }
   );
 
   return NextResponse.json({
@@ -217,7 +233,7 @@ async function generateClipsAsync(
   videoUrl: string,
   videoTitle: string,
   userId: string,
-  formatOptions: VerticalFormatOptions
+  formatOptions: { platform: string; clipLength: string; subtitleStyle: string }
 ) {
   const supabase = createServiceClient();
   let cancelled = false;
@@ -333,7 +349,16 @@ async function generateClipsAsync(
         end_time: c.end_time,
       })),
       undefined,
-      formatOptions,
+      {
+        verticalFormat: {
+          platform: formatOptions.platform as "youtube_shorts" | "instagram_reels" | "tiktok" | "universal_vertical",
+          clipLength: formatOptions.clipLength as "15" | "30" | "60" | "auto",
+        },
+        subtitle: {
+          style: formatOptions.subtitleStyle as "none" | "basic" | "fancy_mrbeast" | "fancy_green_white" | "fancy_yellow_green" | "fancy_red_white" | "custom",
+          position: "bottom",
+        },
+      },
       () => cancelled
     );
 
@@ -348,15 +373,50 @@ async function generateClipsAsync(
       .update({ processing_stage: "upload" })
       .eq("id", clipRequestId);
 
+    // Check if any clips were actually generated
+    if (clipFiles.length === 0) {
+      console.error(`[Clip Generation] No clip files were generated for ${clipRequestId}`);
+      clearInterval(timeoutCheck);
+      await supabase
+        .from("clip_requests")
+        .update({
+          status: "Failed",
+          error_message: "No clips could be generated. The video may not have suitable moments for short clips.",
+          processing_stage: null,
+        })
+        .eq("id", clipRequestId);
+      await cleanupTempFiles(clipRequestId);
+      return;
+    }
+
     const uploadResults = await uploadMultipleClips(userId, clipRequestId, clipFiles);
 
     const clipFilesMap = uploadResults.reduce(
       (acc, result) => {
-        acc[result.clipId] = result.url;
+        acc[result.clipId] = {
+          url: result.url,
+          fileSize: result.fileSize,
+        };
         return acc;
       },
-      {} as Record<string, string>
+      {} as Record<string, { url: string; fileSize: number }>
     );
+
+    // Check if any uploads succeeded
+    if (uploadResults.length === 0) {
+      console.error(`[Clip Generation] No clips were uploaded successfully for ${clipRequestId}`);
+      clearInterval(timeoutCheck);
+      await supabase
+        .from("clip_requests")
+        .update({
+          status: "Failed",
+          error_message: "Failed to upload generated clips. Please try again.",
+          processing_stage: null,
+        })
+        .eq("id", clipRequestId);
+      await cleanupTempFiles(clipRequestId);
+      return;
+    }
 
     console.log(`[Clip Generation] Updating status to Completed for ${clipRequestId} (clips: ${uploadResults.length})...`);
     const { data: updatedRow, error: statusErr } = await supabase

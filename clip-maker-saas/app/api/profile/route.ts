@@ -12,11 +12,13 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let { data: profile, error: selectError } = await supabase
+  const { data: initialProfile, error: selectError } = await supabase
     .from("profiles")
     .select("id, email, plan, clips_limit, free_clips_remaining, created_at")
     .eq("id", user.id)
     .single();
+
+  let profile = initialProfile;
 
   if (selectError) {
     console.error("[API /profile GET] select error:", selectError.message);

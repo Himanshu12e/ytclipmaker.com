@@ -59,6 +59,11 @@ interface GeneratedClip {
   reasoning: string;
 }
 
+interface ClipFileData {
+  url: string;
+  fileSize?: number;
+}
+
 interface ClipRequest {
   id: string;
   video_url: string;
@@ -70,7 +75,7 @@ interface ClipRequest {
   generated_clips: GeneratedClip[] | null;
   transcript: string | null;
   error_message: string | null;
-  clip_files?: Record<string, string> | null;
+  clip_files?: Record<string, string | ClipFileData> | null;
   processing_stage?: string | null;
   clips_generated?: number | null;
   completed_at?: string | null;
@@ -159,6 +164,7 @@ export default function DashboardPage() {
   const [activePollingInterval, setActivePollingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
   const [platform, setPlatform] = useState<string>("youtube_shorts");
   const [clipLength, setClipLength] = useState<string>("auto");
+  const [subtitleStyle, setSubtitleStyle] = useState<string>("none");
 
   const fetchClips = useCallback(async () => {
     try {
@@ -274,6 +280,7 @@ export default function DashboardPage() {
           video_duration_seconds: preview?.duration_seconds ?? null,
           platform,
           clip_length: clipLength,
+          subtitle_style: subtitleStyle,
         }),
       });
 
@@ -735,7 +742,7 @@ export default function DashboardPage() {
                   {isLongVideo && (
                     <div className="border-t border-yellow-500/20 bg-yellow-500/5 px-4 py-3">
                       <p className="text-xs text-yellow-300">
-                        ⚠️ Long videos (over 60 minutes) may take significantly longer to process and could fail due to AI/transcript limits. For best results, use videos under 60 minutes.
+                        ⚠️ Current version supports videos up to 60 minutes for best performance. Your video is {preview?.duration_seconds ? formatDuration(preview.duration_seconds) : "unknown length"}. Longer videos may take significantly longer to process.
                       </p>
                     </div>
                   )}
@@ -767,6 +774,30 @@ export default function DashboardPage() {
                           <option value="30">30 seconds</option>
                           <option value="60">60 seconds</option>
                         </select>
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Subtitles</label>
+                        <select
+                          value={subtitleStyle}
+                          onChange={(e) => setSubtitleStyle(e.target.value)}
+                          className="flex h-9 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                        >
+                          <option value="none">No Subtitles</option>
+                          <option value="basic">Basic Subtitles</option>
+                          {plan !== "free" && (
+                            <>
+                              <option value="fancy_mrbeast">MrBeast Style</option>
+                              <option value="fancy_green_white">Green + White</option>
+                              <option value="fancy_yellow_green">Yellow + Green</option>
+                              <option value="fancy_red_white">Red + White</option>
+                            </>
+                          )}
+                        </select>
+                        {plan === "free" && (
+                          <p className="mt-1 text-[10px] text-muted-foreground">
+                            Fancy subtitles available on Pro
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1111,7 +1142,9 @@ export default function DashboardPage() {
 
                                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                     {clip.generated_clips.map((generatedClip) => {
-                                      const clipUrl = clip.clip_files?.[generatedClip.id];
+                                      const clipFileData = clip.clip_files?.[generatedClip.id];
+                                      const clipUrl = typeof clipFileData === 'string' ? clipFileData : clipFileData?.url;
+                                      const fileSize = typeof clipFileData === 'object' && clipFileData?.fileSize ? clipFileData.fileSize : null;
                                       return (
                                         <div
                                           key={generatedClip.id}
@@ -1155,6 +1188,11 @@ export default function DashboardPage() {
 
                                           <div className="mt-2 flex items-center gap-2">
                                             <ScoreBadge score={generatedClip.viral_score} label="Viral" />
+                                            {fileSize && (
+                                              <span className="text-xs text-muted-foreground">
+                                                {(fileSize / 1024 / 1024).toFixed(1)}MB
+                                              </span>
+                                            )}
                                           </div>
 
                                           {generatedClip.transcript_snippet && (
@@ -1163,25 +1201,31 @@ export default function DashboardPage() {
                                             </p>
                                           )}
 
-                                          {clipUrl && (
-                                            <div className="mt-3 flex items-center gap-2">
-                                              <button
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  handlePlayClip(clipUrl, generatedClip.title);
-                                                }}
-                                                className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-white/10"
-                                              >
-                                                <Play className="h-3 w-3 fill-current" />
-                                                Preview
-                                              </button>
-                                              <DownloadClipButton
-                                                clipUrl={clipUrl}
-                                                clipTitle={generatedClip.title}
-                                                className="!px-2.5 !py-1 !text-xs"
-                                              />
-                                            </div>
-                                          )}
+                                          <div className="mt-3 flex items-center gap-2">
+                                            {clipUrl ? (
+                                              <>
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handlePlayClip(clipUrl, generatedClip.title);
+                                                  }}
+                                                  className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-white/10"
+                                                >
+                                                  <Play className="h-3 w-3 fill-current" />
+                                                  Preview
+                                                </button>
+                                                <DownloadClipButton
+                                                  clipUrl={clipUrl}
+                                                  clipTitle={generatedClip.title}
+                                                  className="!px-2.5 !py-1 !text-xs"
+                                                />
+                                              </>
+                                            ) : (
+                                              <span className="text-xs text-muted-foreground italic">
+                                                Processing...
+                                              </span>
+                                            )}
+                                          </div>
                                         </div>
                                       );
                                     })}
@@ -1257,7 +1301,9 @@ export default function DashboardPage() {
                 {selectedClipDetail.generated_clips && (
                   <div className="space-y-4 mt-4">
                     {selectedClipDetail.generated_clips.map((clip, index) => {
-                      const clipUrl = selectedClipDetail.clip_files?.[clip.id];
+                      const clipFileData = selectedClipDetail.clip_files?.[clip.id];
+                      const clipUrl = typeof clipFileData === 'string' ? clipFileData : clipFileData?.url;
+                      const fileSize = typeof clipFileData === 'object' && clipFileData?.fileSize ? clipFileData.fileSize : null;
                       return (
                         <div
                           key={clip.id}
@@ -1317,6 +1363,11 @@ export default function DashboardPage() {
                                   clipUrl={clipUrl}
                                   clipTitle={clip.title}
                                 />
+                                {fileSize && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {(fileSize / 1024 / 1024).toFixed(1)}MB
+                                  </span>
+                                )}
                               </div>
                             </div>
                           )}

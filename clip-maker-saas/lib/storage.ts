@@ -1,5 +1,5 @@
 import { createServiceClient } from "./supabase/service";
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
 
 const BUCKET_NAME = "clips";
 
@@ -7,6 +7,7 @@ export interface UploadResult {
   clipId: string;
   url: string;
   path: string;
+  fileSize: number;
 }
 
 export async function uploadClipToStorage(
@@ -21,6 +22,7 @@ export async function uploadClipToStorage(
   console.log(`[Storage] Uploading clip ${clipId} to ${storagePath}`);
 
   const fileBuffer = await readFile(filePath);
+  const fileStats = await stat(filePath);
 
   const { error: uploadError } = await supabase.storage
     .from(BUCKET_NAME)
@@ -38,12 +40,13 @@ export async function uploadClipToStorage(
     .from(BUCKET_NAME)
     .getPublicUrl(storagePath);
 
-  console.log(`[Storage] Clip ${clipId} uploaded: ${urlData.publicUrl}`);
+  console.log(`[Storage] Clip ${clipId} uploaded: ${urlData.publicUrl} (${(fileStats.size / 1024 / 1024).toFixed(2)}MB)`);
 
   return {
     clipId,
     url: urlData.publicUrl,
     path: storagePath,
+    fileSize: fileStats.size,
   };
 }
 
